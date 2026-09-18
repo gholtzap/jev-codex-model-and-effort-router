@@ -18,7 +18,7 @@ from settings import atomic_write, config_path, data_dir, load_settings, private
 from usage import read_budget, show_budget
 
 FILES = ('cli.py', 'router.py', 'appserver.py', 'jev_client.py', 'usage.py',
-         'settings.py', 'install.py', 'README.md', 'AGENTS.md')
+         'settings.py', 'install.py')
 MARKER = '# Jev Codex managed launcher'
 
 
