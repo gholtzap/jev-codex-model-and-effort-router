@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import install
+from cli import first_argument
 from router import main
 from settings import config_path, data_dir, load_settings, set_setting, validate
 
@@ -23,12 +24,15 @@ class InstallTests(unittest.TestCase):
                              'XDG_DATA_HOME': str(self.home / '.local/share'),
                              'ZDOTDIR': str(self.home)}, clear=False)
         self.env.start()
+        self.vendor = patch('install.install_vendor', side_effect=lambda path: path.mkdir())
+        self.vendor.start()
         self.binary = self.home / 'original-codex'
         self.binary.write_text('#!/bin/sh\nprintf "original:%s\\n" "$*"\n')
         self.binary.chmod(0o755)
         self.bindir = self.home / '.local/bin'
 
     def tearDown(self):
+        self.vendor.stop()
         self.env.stop()
         self.temp.cleanup()
 
@@ -52,6 +56,11 @@ class InstallTests(unittest.TestCase):
         self.assertNotIn('test-key', self.run_cli('doctor', '--offline').stdout)
         wrapped = subprocess.run([str(self.bindir / 'codex'), 'app-server', '--help'], text=True, capture_output=True, timeout=10)
         self.assertEqual(wrapped.stdout.strip(), 'original:app-server --help')
+        self.assertEqual(first_argument(['-C', '/tmp', 'exec', 'echo']), 'exec')
+        self.assertEqual(first_argument(['-C', '/tmp', 'resume', 'thread-id']), 'resume')
+        wrapped = subprocess.run([str(self.bindir / 'codex'), '-C', str(self.home), 'exec', '--help'],
+                                 text=True, capture_output=True, timeout=10)
+        self.assertEqual(wrapped.stdout.strip(), f'original:-C {self.home} exec --help')
         original = subprocess.run([str(self.bindir / 'codex-original'), '--version'], text=True, capture_output=True, timeout=10)
         self.assertEqual(original.stdout.strip(), 'original:--version')
         with patch.dict(os.environ, {'PATH': str(self.bindir) + os.pathsep + str(self.home)}):

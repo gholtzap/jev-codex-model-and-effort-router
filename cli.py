@@ -11,7 +11,27 @@ from settings import config_path, default_env_file, load_settings, set_setting
 
 NATIVE_COMMANDS = {'exec', 'e', 'review', 'login', 'logout', 'mcp', 'mcp-server',
                    'app-server', 'completion', 'sandbox', 'debug', 'apply', 'a',
-                   'resume', 'fork', 'cloud', 'features', '--version', '-V'}
+                   'cloud', 'features', '--version', '-V', '--help', '-h',
+                   'agents', 'plugin', 'remote-control', 'app', 'update', 'doctor',
+                   'queue', 'archive', 'delete', 'unarchive', 'migrate-rollouts', 'help'}
+VALUE_OPTIONS = {'-c', '--config', '--remote', '--remote-auth-token-env', '-i', '--image',
+                 '-m', '--model', '--local-provider', '-p', '--profile', '-s', '--sandbox',
+                 '-C', '--cd', '--add-dir', '-a', '--ask-for-approval'}
+
+
+def first_argument(args):
+    index = 0
+    while index < len(args):
+        value = args[index]
+        if value == '--':
+            return None
+        if value in VALUE_OPTIONS:
+            index += 2
+        elif value.startswith('-'):
+            index += 1
+        else:
+            return value
+    return None
 
 
 def main():
@@ -19,10 +39,13 @@ def main():
         args = sys.argv[1:]
         if args[:1] == ['--codex-wrapper']:
             args = args[1:]
-            if not args:
-                print('Jev Codex routing is enabled. Use codex-original for the standard interface.', file=sys.stderr)
-            if args and args[0] in NATIVE_COMMANDS:
+            command = first_argument(args)
+            if command in NATIVE_COMMANDS or any(option in args for option in (
+                '-m', '--model', '--remote', '--help', '-h', '--version', '-V')):
                 args = ['--original', *args]
+            else:
+                from native import run
+                return run(args)
         if args[:1] == ['--original']:
             binary = installed_codex()
             os.execv(binary, [binary, *args[1:]])
@@ -64,8 +87,23 @@ def main():
             parser.add_argument('--purge', action='store_true', help='Also remove saved settings and the TypeSafe key')
             uninstall(parser.parse_args(args[1:]).purge)
             return 0
+        if args[:2] == ['auto', 'on']:
+            parser = argparse.ArgumentParser(prog='jev-codex auto on')
+            parser.add_argument('thread_id')
+            from native import enable_auto
+            enable_auto(parser.parse_args(args[2:]).thread_id)
+            print('Automatic routing will resume on the next turn.')
+            return 0
+        if not args or args[:1] == ['tui']:
+            from native import run
+            return run(args[1:] if args else [])
+        if args[:1] in (['resume'], ['fork']):
+            from native import run
+            return run(args)
+        if args[:1] == ['route']:
+            args = args[1:]
         if args == ['--version']:
-            print('jev-codex 0.2.0')
+            print('jev-codex 0.3.0')
             return 0
         from router import main as route
         sys.argv[1:] = args

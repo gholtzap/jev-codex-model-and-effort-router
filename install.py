@@ -18,8 +18,9 @@ from settings import atomic_write, config_path, data_dir, load_settings, private
 from usage import read_budget, show_budget
 
 FILES = ('cli.py', 'router.py', 'appserver.py', 'jev_client.py', 'usage.py',
-         'settings.py', 'install.py')
+         'settings.py', 'install.py', 'native.py', 'native_proxy.py')
 MARKER = '# Jev Codex managed launcher'
+WEBSOCKETS_VERSION = '16.1.1'
 
 
 def digest(text):
@@ -85,6 +86,15 @@ def shell_files():
     raise RuntimeError('Automatic PATH setup supports zsh and bash. Use --no-shell for other shells.')
 
 
+def install_vendor(path):
+    result = subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-input',
+                             '--disable-pip-version-check', '--target', str(path),
+                             f'websockets=={WEBSOCKETS_VERSION}'],
+                            text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError('Could not install the WebSocket dependency: ' + result.stderr[-1000:])
+
+
 def install(codex, key, wrap=False, change_shell=True):
     root = data_dir()
     bindir = Path.home() / '.local/bin'
@@ -118,7 +128,7 @@ def install(codex, key, wrap=False, change_shell=True):
                     writes[str(file)] = text + block
                     shell_records[str(file)] = {'block': block, 'created': not file.exists()}
         sources = {name: Path(__file__).with_name(name).read_text() for name in FILES}
-        version = digest(json.dumps(sources, sort_keys=True))[:20]
+        version = digest(json.dumps({'sources': sources, 'websockets': WEBSOCKETS_VERSION}, sort_keys=True))[:20]
         release = root / 'releases' / version
         if not release.exists():
             release.parent.mkdir(exist_ok=True)
@@ -126,6 +136,7 @@ def install(codex, key, wrap=False, change_shell=True):
             try:
                 for name, text in sources.items():
                     atomic_write(staging / name, text)
+                install_vendor(staging / 'vendor')
                 staging.rename(release)
             finally:
                 if staging.exists():
@@ -167,7 +178,7 @@ def install(codex, key, wrap=False, change_shell=True):
     print(f'Installed: {bindir / "jev-codex"}')
     print('Defaults: balanced routing, 10% reserve, usage display on. Existing settings were kept.')
     if wrap:
-        print('The optional codex command starts the router. Use codex-original for the standard Codex interface.')
+        print('The codex command keeps the standard terminal UI and routes user turns through Jev.')
     print('Open a new terminal, enter your project directory, and run ' + ('codex.' if wrap else 'jev-codex.'))
 
 
