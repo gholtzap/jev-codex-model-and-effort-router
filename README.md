@@ -1,6 +1,6 @@
 ## Quick Setup
 
-Tell your agent 'Set up https://github.com/gholtzap/jev-codex-model-and-effort-router/ with default settings'
+Tell your agent `Set up https://github.com/gholtzap/jev-codex-model-and-effort-router/ with default settings`
 
 ## What does it do?
 
