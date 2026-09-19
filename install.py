@@ -99,11 +99,10 @@ def verify_jev(key):
 def prompt_key(force=False, required=True, save=True):
     credential = config_path().with_name('credentials.env')
     if not force:
-        for key_file in (credential, Path(__file__).with_name('.env')):
-            try:
-                return load_key(key_file)
-            except (FileNotFoundError, JevError):
-                continue
+        try:
+            return load_key(credential)
+        except (FileNotFoundError, JevError):
+            pass
     if not sys.stdin.isatty():
         if required:
             raise RuntimeError('Run jev-codex auth login in a terminal to add your TypeSafe API key.')
@@ -160,6 +159,8 @@ def install(codex, key, wrap=None, change_shell=True):
         old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
         if wrap is None:
             wrap = old.get('wrap_codex', True)
+        if wrap and Path(codex).absolute() == bindir / 'codex':
+            raise RuntimeError('Codex already uses ~/.local/bin/codex, where the Jev wrapper must be installed. Move the original Codex command or use --no-wrap-codex.')
         commands = {'jev-codex': '', 'codex-original': '--original'}
         if wrap:
             commands['codex'] = '--codex-wrapper'
@@ -202,7 +203,8 @@ def install(codex, key, wrap=None, change_shell=True):
                 if staging.exists():
                     shutil.rmtree(staging)
         settings_file = config_path()
-        if not settings_file.exists():
+        settings_kept = settings_file.exists()
+        if not settings_kept:
             writes[str(settings_file)] = json.dumps(load_settings(), indent=2) + '\n'
         credential = settings_file.with_name('credentials.env')
         if key is not None:
@@ -241,14 +243,19 @@ def install(codex, key, wrap=None, change_shell=True):
                 current.unlink(missing_ok=True)
             raise
     print(f'Installed: {bindir / "jev-codex"}')
-    print('Defaults: balanced routing, automatic maximum effort, 10% reserve, usage display on. Existing settings were kept.')
+    print('Defaults: balanced routing, automatic maximum effort, 10% reserve, usage display on.' +
+          (' Existing settings were kept.' if settings_kept else ''))
     if wrap:
         print('The codex command keeps the standard terminal UI and routes user turns through Jev.')
     if key is None:
         print('Your TypeSafe API key will be requested when you first run codex.')
     if sys.platform == 'darwin':
         print('Run jev-codex settings to open the menu-bar settings app.')
-    print('Open a new terminal, enter your project directory, and run ' + ('codex.' if wrap else 'jev-codex.'))
+    command = 'codex' if wrap else 'jev-codex'
+    if change_shell:
+        print(f'Open a new terminal, enter your project directory, and run {command}.')
+    else:
+        print(f'Run {bindir / command}, or add {bindir} to PATH.')
 
 
 def uninstall(purge=False):
@@ -280,12 +287,16 @@ def uninstall(purge=False):
         for filename in saved['commands']:
             Path(filename).unlink(missing_ok=True)
         shutil.rmtree(root)
+    settings_file = config_path()
+    kept = [name for name, path in (
+        ('settings', settings_file), ('TypeSafe key', settings_file.with_name('credentials.env')))
+        if path.exists()]
     if purge:
-        for name in ('config.json', 'config.lock', 'credentials.env'):
+        for name in ('config.json', 'config.lock', 'credentials.env', 'catalog.json'):
             config_path().with_name(name).unlink(missing_ok=True)
     print('Removed the installed commands and managed PATH entries. Codex conversations and audit records were kept.')
-    if not purge:
-        print('Saved settings and the TypeSafe key were kept. Use --purge during uninstall to remove them.')
+    if not purge and kept:
+        print('Saved ' + ' and '.join(kept) + ' were kept. Use --purge during uninstall to remove them.')
 
 
 def main():
@@ -301,19 +312,25 @@ def main():
     args = parser.parse_args()
     if sys.version_info < (3, 10) or os.name != 'posix':
         parser.error('Python 3.10 or later on macOS or Linux is required.')
+    root = data_dir()
+    fresh_root = not root.exists()
     try:
         codex = find_codex(args.codex_path) if args.codex_path else installed_codex()
         if args.env_file:
-            key = load_key(args.env_file)
+            key = load_key(args.env_file, use_environment=False)
         else:
             key = prompt_key(required=False, save=False)
         verify(codex, key, check_jev=key is not None)
         install(codex, key, args.wrap_codex, not args.no_shell)
         return 0
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
+        if fresh_root and (root / '.managed').is_file() and not (root / 'install.json').exists():
+            shutil.rmtree(root, ignore_errors=True)
         print(f'Setup failed: {error}', file=sys.stderr)
         return 1
     except (EOFError, KeyboardInterrupt):
+        if fresh_root and (root / '.managed').is_file() and not (root / 'install.json').exists():
+            shutil.rmtree(root, ignore_errors=True)
         print('Setup cancelled.', file=sys.stderr)
         return 130
 

@@ -22,15 +22,15 @@ def key_action():
         return 'route'
     except (FileNotFoundError, JevError):
         pass
-    choice = input('Jev needs a TypeSafe API key. Add one [a], continue without Jev [Enter], or uninstall Jev [u]: ').strip().lower()
-    if not choice:
-        return 'original'
-    if choice == 'u':
-        return 'uninstall'
-    if choice == 'a':
-        prompt_key(force=True)
-        return 'route'
-    raise ValueError('Enter a, u, or press Enter.')
+    while True:
+        choice = input('Jev needs a TypeSafe API key. Add one [a], continue without Jev [Enter], or uninstall Jev [u]: ').strip().lower()
+        if not choice:
+            return 'original'
+        if choice == 'u':
+            return 'uninstall'
+        if choice == 'a':
+            return 'route' if prompt_key(force=True, required=False) else 'original'
+        print('Enter a, u, or press Enter.')
 
 
 def run(args):

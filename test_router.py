@@ -152,6 +152,7 @@ class RouterTests(unittest.TestCase):
                 self.assertEqual(load_key(path), 'test-key')
             with patch.dict('os.environ', {'JEV_API_KEY': 'override'}):
                 self.assertEqual(load_key(path), 'override')
+                self.assertEqual(load_key(path, use_environment=False), 'test-key')
 
     def test_http_failure_does_not_expose_key_and_retries_are_bounded(self):
         error = HTTPError('https://api.typesafe.ai', 429, 'rate limit', {}, None)

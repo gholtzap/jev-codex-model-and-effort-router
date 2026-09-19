@@ -13,8 +13,8 @@ class JevError(RuntimeError):
     pass
 
 
-def load_key(path):
-    if os.environ.get('JEV_API_KEY'):
+def load_key(path, use_environment=True):
+    if use_environment and os.environ.get('JEV_API_KEY'):
         return os.environ['JEV_API_KEY']
     for line in Path(path).read_text().splitlines():
         parts = shlex.split(line, comments=True)

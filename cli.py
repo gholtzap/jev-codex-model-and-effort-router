@@ -137,6 +137,9 @@ def main():
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         print(f'Error: {error}', file=sys.stderr)
         return 1
+    except (EOFError, KeyboardInterrupt):
+        print('\nCancelled.', file=sys.stderr)
+        return 130
 
 
 if __name__ == '__main__':
