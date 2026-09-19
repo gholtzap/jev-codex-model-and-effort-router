@@ -1,3 +1,7 @@
+## Pre-reqs
+- macos
+- Jev api key
+
 ## Quick Setup
 
 Copy and paste this into your coding agent:
