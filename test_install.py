@@ -11,7 +11,9 @@ from unittest.mock import Mock, patch
 
 import install
 from cli import first_argument
+from native import key_action, run as native_run
 from router import main
+from jev_client import JevError
 from settings import config_path, data_dir, load_settings, set_setting, validate
 
 
@@ -121,6 +123,30 @@ class InstallTests(unittest.TestCase):
         check.assert_called_once_with('new-key')
         self.assertEqual(credential.stat().st_mode & 0o777, 0o600)
         self.assertEqual(install.prompt_key(), 'new-key')
+
+    def test_first_run_key_choices(self):
+        with patch('native.load_key', side_effect=JevError('missing')), \
+             patch('builtins.input', return_value=''):
+            self.assertEqual(key_action(), 'original')
+        with patch('native.load_key', side_effect=FileNotFoundError), \
+             patch('builtins.input', return_value='u'):
+            self.assertEqual(key_action(), 'uninstall')
+        with patch('native.load_key', side_effect=JevError('missing')), \
+             patch('builtins.input', return_value='a'), \
+             patch('native.prompt_key') as prompt:
+            self.assertEqual(key_action(), 'route')
+        prompt.assert_called_once_with(force=True)
+        for action in ('original', 'uninstall'):
+            with patch('native.installed_codex', return_value=str(self.binary)), \
+                 patch('native.key_action', return_value=action), \
+                 patch('native.uninstall') as remove, \
+                 patch('native.subprocess.call', return_value=0) as call, \
+                 patch('sys.stdout', new_callable=io.StringIO):
+                self.assertEqual(native_run(['--help']), 0)
+            call.assert_called_once_with([str(self.binary), '--help'])
+            self.assertEqual(remove.call_count, action == 'uninstall')
+            if action == 'uninstall':
+                remove.assert_called_once_with(purge=True)
 
     def test_failed_update_restores_previous_installation_and_shell_link(self):
         target = self.home / 'shell-config'

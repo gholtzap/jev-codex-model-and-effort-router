@@ -5,7 +5,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from install import installed_codex, prompt_key
+from install import installed_codex, prompt_key, uninstall
+from jev_client import JevError, load_key
+from settings import default_env_file
 
 
 def enable_auto(thread_id):
@@ -14,9 +16,36 @@ def enable_auto(thread_id):
     (Path.home() / '.local/state/jev-codex' / f'{thread_id}.pin').unlink(missing_ok=True)
 
 
+def key_action():
+    try:
+        load_key(default_env_file())
+        return 'route'
+    except (FileNotFoundError, JevError):
+        pass
+    choice = input('Jev needs a TypeSafe API key. Add one [a], continue without Jev [Enter], or uninstall Jev [u]: ').strip().lower()
+    if not choice:
+        return 'original'
+    if choice == 'u':
+        return 'uninstall'
+    if choice == 'a':
+        prompt_key(force=True)
+        return 'route'
+    raise ValueError('Enter a, u, or press Enter.')
+
+
 def run(args):
-    prompt_key()
     codex = installed_codex()
+    try:
+        action = key_action()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 130
+    if action == 'original':
+        print('Starting Codex without Jev. Run jev-codex auth login when you want to enable routing.')
+        return subprocess.call([codex, *args])
+    if action == 'uninstall':
+        uninstall(purge=True)
+        return subprocess.call([codex, *args])
     with tempfile.TemporaryDirectory(prefix='jev-codex-') as directory:
         root = Path(directory)
         socket = root / 'route.sock'

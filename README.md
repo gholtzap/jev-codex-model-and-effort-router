@@ -8,6 +8,7 @@ Copy and paste this into your coding agent:
 
 > Set up and verify https://github.com/gholtzap/jev-codex-model-and-effort-router with default settings.
 
+If no key is available, the first `codex` start lets the user add one, continue with normal Codex, or remove Jev. Key input is hidden, validated, and saved in a user-only file. Run `jev-codex auth login` to replace the saved key.
 ## Setup Options
 
 | Option | Purpose |
@@ -28,4 +29,3 @@ On macOS, run `jev-codex settings` to Launch the Menu Bar app.
 You can use this app to choose a routing preference, maximum effort, and the model and effort pools from the menu bar.
 
 <img width="374" height="250" alt="Screenshot 2026-09-19 at 11 57 45 AM" src="https://github.com/user-attachments/assets/4d6cd248-ddd4-4c89-b96e-d884b545dbc8" />
-

@@ -109,9 +109,12 @@ def prompt_key(force=False, required=True, save=True):
             raise RuntimeError('Run jev-codex auth login in a terminal to add your TypeSafe API key.')
         return None
     print(f'Create or copy your TypeSafe API key at {TYPESAFE_CONSOLE}')
-    key = getpass.getpass('TypeSafe API key (input hidden): ').strip()
+    suffix = '' if required else '; press Enter to set it up later'
+    key = getpass.getpass(f'TypeSafe API key (input hidden{suffix}): ').strip()
     if not key:
-        raise RuntimeError('A TypeSafe API key is required.')
+        if required:
+            raise RuntimeError('A TypeSafe API key is required.')
+        return None
     verify_jev(key)
     if save:
         atomic_write(credential, 'JEV_API_KEY=' + shlex.quote(key) + '\n')
