@@ -18,9 +18,31 @@ from settings import atomic_write, config_path, data_dir, load_settings, private
 from usage import read_budget, show_budget
 
 FILES = ('cli.py', 'router.py', 'appserver.py', 'jev_client.py', 'usage.py',
-         'settings.py', 'install.py', 'native.py', 'native_proxy.py')
+         'settings.py', 'install.py', 'native.py', 'native_proxy.py', 'menu_bar.swift')
 MARKER = '# Jev Codex managed launcher'
 WEBSOCKETS_VERSION = '16.1.1'
+
+
+def build_settings_app(root):
+    if sys.platform != 'darwin':
+        return
+    executable = root / 'Jev Codex Settings.app/Contents/MacOS/JevCodexSettings'
+    executable.parent.mkdir(parents=True)
+    result = subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(root / 'menu_bar.swift'),
+                             '-o', str(executable), '-framework', 'AppKit'],
+                            text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError('Could not build the macOS settings menu: ' + result.stderr[-1000:])
+    atomic_write(executable.parent.parent / 'Info.plist', '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>JevCodexSettings</string>
+<key>CFBundleIdentifier</key><string>com.gholtzap.jev-codex-settings</string>
+<key>CFBundleName</key><string>Jev Codex</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+''')
 
 
 def digest(text):
@@ -137,6 +159,7 @@ def install(codex, key, wrap=False, change_shell=True):
                 for name, text in sources.items():
                     atomic_write(staging / name, text)
                 install_vendor(staging / 'vendor')
+                build_settings_app(staging)
                 staging.rename(release)
             finally:
                 if staging.exists():
@@ -176,9 +199,11 @@ def install(codex, key, wrap=False, change_shell=True):
                 current.unlink(missing_ok=True)
             raise
     print(f'Installed: {bindir / "jev-codex"}')
-    print('Defaults: balanced routing, 10% reserve, usage display on. Existing settings were kept.')
+    print('Defaults: balanced routing, automatic maximum effort, 10% reserve, usage display on. Existing settings were kept.')
     if wrap:
         print('The codex command keeps the standard terminal UI and routes user turns through Jev.')
+    if sys.platform == 'darwin':
+        print('Run jev-codex settings to open the menu-bar settings app.')
     print('Open a new terminal, enter your project directory, and run ' + ('codex.' if wrap else 'jev-codex.'))
 
 

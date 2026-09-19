@@ -6,8 +6,12 @@ import os
 import tempfile
 from pathlib import Path
 
-DEFAULTS = {'usage_policy': 'balanced', 'reserve_percent': 10, 'show_usage': True,
-            'usage_limit': 'codex', 'allow_model': None, 'jev_model': 'jev-latest'}
+DEFAULTS = {'routing_preference': 'balanced', 'maximum_effort': 'automatic',
+            'usage_policy': 'balanced', 'reserve_percent': 10, 'show_usage': True,
+            'usage_limit': 'codex', 'allow_model': None, 'allow_effort': None,
+            'jev_model': 'jev-latest'}
+LEGACY_ECONOMY = {'xhigh': 'lowest_usage', 'high': 'lower_usage',
+                  'medium': 'balanced', 'low': 'higher_quality'}
 
 
 def config_path():
@@ -39,9 +43,22 @@ def private_write(path, value):
 
 
 def validate(values):
-    if not isinstance(values, dict) or values.keys() - DEFAULTS.keys():
+    if not isinstance(values, dict):
+        raise ValueError('Settings must be an object containing only supported setting names.')
+    values = dict(values)
+    legacy = values.pop('economy', None)
+    if legacy is not None:
+        if legacy not in LEGACY_ECONOMY:
+            raise ValueError('Legacy economy must be low, medium, high, or xhigh.')
+        values.setdefault('routing_preference', LEGACY_ECONOMY[legacy])
+    if values.keys() - DEFAULTS.keys():
         raise ValueError('Settings must be an object containing only supported setting names.')
     result = {**DEFAULTS, **values}
+    if result['routing_preference'] not in ('lowest_usage', 'lower_usage', 'balanced',
+                                             'higher_quality', 'highest_quality'):
+        raise ValueError('routing_preference must be lowest_usage, lower_usage, balanced, higher_quality, or highest_quality.')
+    if result['maximum_effort'] not in ('automatic', 'high', 'xhigh', 'max'):
+        raise ValueError('maximum_effort must be automatic, high, xhigh, or max.')
     if result['usage_policy'] not in ('quality', 'balanced', 'conserve'):
         raise ValueError('usage_policy must be quality, balanced, or conserve.')
     reserve = result['reserve_percent']
@@ -54,8 +71,14 @@ def validate(values):
             raise ValueError(f'{name} must be a nonempty string.')
     allowed = result['allow_model']
     if allowed is not None and (not isinstance(allowed, list) or not allowed or
+                               len(set(allowed)) != len(allowed) or
                                any(not isinstance(v, str) or not v.strip() for v in allowed)):
         raise ValueError('allow_model must be null or a nonempty array of model names.')
+    efforts = result['allow_effort']
+    known_efforts = {'low', 'medium', 'high', 'xhigh', 'max', 'ultra'}
+    if efforts is not None and (not isinstance(efforts, list) or not efforts or
+                                len(set(efforts)) != len(efforts) or set(efforts) - known_efforts):
+        raise ValueError('allow_effort must be null or a nonempty array of supported effort names.')
     return result
 
 
@@ -67,6 +90,10 @@ def load_settings(path=None, overrides=None):
 
 
 def set_setting(name, value, path=None):
+    if name == 'economy':
+        if value not in LEGACY_ECONOMY:
+            raise ValueError('Legacy economy must be low, medium, high, or xhigh.')
+        name, value = 'routing_preference', LEGACY_ECONOMY[value]
     path = path or config_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with open(path.with_suffix('.lock'), 'a') as lock:

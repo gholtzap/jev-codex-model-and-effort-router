@@ -40,19 +40,70 @@ class RouterTests(unittest.TestCase):
                 usage_budget(bad, 'balanced', 10, now=0)
         self.assertTrue(usage_budget({**snapshot(), 'ordinaryUsageAllowed': False}, 'balanced', 10, now=0)['usage_blocked'])
 
-    def test_usage_failure_is_explicit_and_quality_does_not_send_budget(self):
+    def test_usage_failure_is_explicit_and_routing_preference_is_authoritative(self):
         from unittest.mock import Mock
         server = Mock()
         server.call.side_effect = RpcError('unavailable')
         self.assertIn('unavailable', read_budget(server, 'quality', 10, 'codex'))
         with self.assertRaises(RuntimeError):
             read_budget(server, 'balanced', 10, 'codex', required=True)
-        answer = {'answers': {'route': {'type': 'choice', 'choice': 'test-model/low',
-                  'confidence': 1, 'probabilities': {'test-model/low': 1}}}}
+        answer = {'answers': {
+            'task_class': {'type': 'choice', 'choice': 'routine', 'confidence': 1,
+                           'probabilities': {'routine': 1, 'standard': 0, 'demanding': 0}},
+            'route': {'type': 'choice', 'choice': 'test-model/low',
+                      'confidence': 1, 'probabilities': {'test-model/low': 1}}}}
         for mode in ('quality', 'balanced'):
             with patch('router.ask', return_value=answer) as request:
                 choose('key', routes_for([MODEL]), 'task', {}, 'jev', {'mode': mode})
-                self.assertEqual('usage_policy' in request.call_args.args[1], mode == 'balanced')
+                self.assertNotIn('usage_policy', request.call_args.args[1])
+                self.assertEqual(request.call_args.args[1]['routing_preference']['level'], 'balanced')
+
+    def test_demanding_work_enforces_model_and_effort_floor(self):
+        models = [
+            {'model': 'luna', 'description': 'Fast and affordable agentic coding model.',
+             'supportedReasoningEfforts': [{'reasoningEffort': 'high', 'description': 'Deep'}]},
+            {'model': 'sol', 'description': 'Reliable agentic workhorse for everyday tasks.',
+             'supportedReasoningEfforts': [{'reasoningEffort': 'high', 'description': 'Deep'}]},
+            {'model': 'astra', 'description': 'Our most capable model for complex, demanding work.',
+             'supportedReasoningEfforts': [{'reasoningEffort': 'high', 'description': 'Deep'}]},
+        ]
+        probabilities = {'luna/high': .6, 'sol/high': .3, 'astra/high': .1}
+        answer = {'answers': {
+            'task_class': {'type': 'choice', 'choice': 'demanding', 'confidence': 1,
+                           'probabilities': {'routine': 0, 'standard': 0, 'demanding': 1}},
+            'route': {'type': 'choice', 'choice': 'luna/high', 'confidence': .6,
+                      'probabilities': probabilities}}}
+        with patch('router.ask', return_value=answer):
+            balanced = choose('key', routes_for(models), 'audit and repair', {}, 'jev', routing_preference='balanced')
+            quality = choose('key', routes_for(models), 'audit and repair', {}, 'jev', routing_preference='higher_quality')
+        self.assertEqual((balanced['model'], balanced['effort']), ('sol', 'high'))
+        self.assertEqual((quality['model'], quality['effort']), ('astra', 'high'))
+        self.assertTrue(balanced['policy_adjusted'])
+
+        answer['answers']['task_class']['choice'] = 'routine'
+        answer['answers']['task_class']['probabilities'] = {'routine': 1, 'standard': 0, 'demanding': 0}
+        with patch('router.ask', return_value=answer):
+            highest = choose('key', routes_for(models), 'hello', {}, 'jev',
+                             routing_preference='highest_quality')
+        self.assertEqual(highest['model'], 'astra')
+
+    def test_maximum_effort_caps_the_selected_model(self):
+        model = {'model': 'astra', 'description': 'Our most capable model for complex, demanding work.',
+                 'supportedReasoningEfforts': [
+                     {'reasoningEffort': effort, 'description': effort}
+                     for effort in ('low', 'medium', 'high', 'xhigh', 'max', 'ultra')]}
+        probabilities = {f'astra/{effort}': value for effort, value in
+                         zip(('low', 'medium', 'high', 'xhigh', 'max', 'ultra'), (.05, .05, .1, .2, .2, .4))}
+        answer = {'answers': {
+            'task_class': {'type': 'choice', 'choice': 'demanding', 'confidence': 1,
+                           'probabilities': {'routine': 0, 'standard': 0, 'demanding': 1}},
+            'route': {'type': 'choice', 'choice': 'astra/ultra', 'confidence': .4,
+                      'probabilities': probabilities}}}
+        with patch('router.ask', return_value=answer):
+            route = choose('key', routes_for([model]), 'complex task', {}, 'jev',
+                           routing_preference='highest_quality', maximum_effort='high')
+        self.assertEqual((route['model'], route['effort']), ('astra', 'high'))
+        self.assertTrue(route['policy_adjusted'])
 
     def test_explicit_check_exit_output_and_timeout(self):
         import subprocess
@@ -117,10 +168,14 @@ class RouterTests(unittest.TestCase):
 
     def test_route_contract_rejects_unknown_model_and_effort(self):
         self.assertEqual(routes_for([MODEL])['test-model/low']['effort'], 'low')
+        self.assertEqual(set(routes_for([MODEL], allowed_efforts=['low'])), {'test-model/low'})
         with self.assertRaises(ValueError):
             routes_for([MODEL], ['unknown'])
         with self.assertRaises(ValueError):
             routes_for([MODEL], policy={'bad': {'model': 'test-model', 'effort': 'invalid', 'description': 'x'}})
+        with self.assertRaises(ValueError):
+            routes_for([MODEL], policy={'bad': {'model': 'test-model', 'effort': 'low', 'description': 'x'}},
+                       allowed_efforts=['high'])
 
     def test_invalid_jev_decisions_cannot_execute(self):
         valid = {'type': 'choice', 'choice': 'a', 'probabilities': {'a': .6, 'b': .4}, 'confidence': .2}

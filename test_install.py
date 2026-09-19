@@ -46,6 +46,8 @@ class InstallTests(unittest.TestCase):
         with patch('sys.stdout', new_callable=io.StringIO):
             install.install(str(self.binary), 'test-key', wrap=True)
         self.assertEqual(self.run_cli('doctor', '--offline').returncode, 0)
+        if sys.platform == 'darwin':
+            self.assertTrue((data_dir() / 'current/Jev Codex Settings.app/Contents/MacOS/JevCodexSettings').is_file())
         self.assertEqual(self.run_cli('config', 'set', 'reserve-percent', '15').returncode, 0)
         self.assertEqual(json.loads(self.run_cli('config', 'show').stdout)['reserve_percent'], 15)
         self.assertEqual(self.run_cli('config', 'set', 'reserve_percent', '-1').returncode, 1)
@@ -157,8 +159,17 @@ class InstallTests(unittest.TestCase):
             start = next(c for c in server.call.call_args_list if c.args[0] == 'thread/start')
             self.assertIn('Keep this instruction.', start.args[1]['developerInstructions'])
             self.assertIn('config', start.args[1]['developerInstructions'])
+        self.assertEqual(validate({'economy': 'medium'})['routing_preference'], 'balanced')
+        for preference in ('lowest_usage', 'lower_usage', 'balanced', 'higher_quality', 'highest_quality'):
+            self.assertEqual(validate({'routing_preference': preference})['routing_preference'], preference)
+        for effort in ('automatic', 'high', 'xhigh', 'max'):
+            self.assertEqual(validate({'maximum_effort': effort})['maximum_effort'], effort)
+        self.assertEqual(validate({'allow_effort': ['low', 'max']})['allow_effort'], ['low', 'max'])
         for values in ({'show_usage': 'false'}, {'reserve_percent': True}, {'reserve_percent': float('nan')},
-                       {'allow_model': []}, {'unknown': 1}, {'usage_policy': []}):
+                       {'allow_model': []}, {'unknown': 1}, {'usage_policy': []},
+                       {'economy': 'maximum'}, {'routing_preference': 'maximum'},
+                       {'maximum_effort': 'ultra'}, {'allow_effort': []},
+                       {'allow_effort': ['high', 'high']}, {'allow_effort': ['unknown']}):
             with self.assertRaises(ValueError):
                 validate(values)
 

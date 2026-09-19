@@ -49,9 +49,9 @@ def usage_budget(snapshot, mode, reserve, limit_id='codex', now=None):
         pressure = 0
     elif mode == 'conserve':
         pressure = max(0.5, pressure)
-    preference = 'normal' if pressure < 0.25 else 'economical' if pressure < 0.65 else 'strongly economical'
+    pressure_level = 'low' if pressure < 0.25 else 'medium' if pressure < 0.65 else 'high'
     return {'mode': mode, 'limit_id': limit_id, 'reserve_percent': reserve,
-            'pressure': pressure, 'preference': preference, 'windows': windows,
+            'pressure': pressure, 'pressure_level': pressure_level, 'windows': windows,
             'observed_at': now,
             'usage_blocked': snapshot.get('ordinaryUsageAllowed') is False or
                 bucket.get('spendControlReached') is True or bool(bucket.get('rateLimitReachedType'))}
@@ -75,4 +75,4 @@ def show_budget(budget):
         print(f"Usage ({budget['limit_id']}, {window['window_minutes']:g} min): "
               f"{window['remaining_percent']:g}% left; resets {reset}; "
               f"{window['daily_allowance_percent']:.1f} percentage points/day after reserve.", flush=True)
-    print(f"Policy: {budget['mode']}; preference: {budget['preference']}.", flush=True)
+    print(f"Quota policy: {budget['mode']}; pressure: {budget['pressure_level']}.", flush=True)

@@ -2,12 +2,13 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from install import installed_codex, uninstall, verify
 from jev_client import load_key
-from settings import config_path, default_env_file, load_settings, set_setting
+from settings import config_path, default_env_file, load_settings, private_write, set_setting
 
 NATIVE_COMMANDS = {'exec', 'e', 'review', 'login', 'logout', 'mcp', 'mcp-server',
                    'app-server', 'completion', 'sandbox', 'debug', 'apply', 'a',
@@ -87,6 +88,27 @@ def main():
             parser.add_argument('--purge', action='store_true', help='Also remove saved settings and the TypeSafe key')
             uninstall(parser.parse_args(args[1:]).purge)
             return 0
+        if args[:1] == ['settings']:
+            if sys.platform != 'darwin':
+                raise RuntimeError('The settings menu is available on macOS only.')
+            app = Path(__file__).with_name('Jev Codex Settings.app')
+            if not app.exists():
+                raise RuntimeError('The settings menu is not installed. Run the installer again.')
+            from appserver import AppServer
+            server = AppServer(lambda *_: (_ for _ in ()).throw(RuntimeError('Unexpected settings request.')),
+                               [installed_codex(), 'app-server', '--stdio'])
+            try:
+                server.initialize()
+                models = server.models()
+            finally:
+                server.close()
+            order = ('low', 'medium', 'high', 'xhigh', 'max', 'ultra')
+            supported = {effort['reasoningEffort'] for model in models
+                         for effort in model['supportedReasoningEfforts']}
+            private_write(config_path().with_name('catalog.json'), {
+                'models': [model['model'] for model in models],
+                'efforts': [effort for effort in order if effort in supported]})
+            return subprocess.call(['open', str(app), '--args', '--config', str(config_path())])
         if args[:2] == ['auto', 'on']:
             parser = argparse.ArgumentParser(prog='jev-codex auto on')
             parser.add_argument('thread_id')

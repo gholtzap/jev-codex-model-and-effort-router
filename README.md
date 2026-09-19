@@ -5,3 +5,5 @@ Tell your agent `Set up https://github.com/gholtzap/jev-codex-model-and-effort-r
 ## What does it do?
 
 Every time you send a message on Codex, [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev) changes the model and effort to match the complexity of your request.
+
+On macOS, run `jev-codex settings` to choose a routing preference, maximum effort, and the model and effort pools from the menu bar. The router reloads them before each turn.

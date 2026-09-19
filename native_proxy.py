@@ -73,7 +73,7 @@ async def select(backend, params, state_dir):
     settings = load_settings()
     key = load_key(default_env_file())
     models = await catalog(backend)
-    routes = routes_for(models, settings['allow_model'])
+    routes = routes_for(models, settings['allow_model'], allowed_efforts=settings['allow_effort'])
     thread_id = params['threadId']
     turns, cursor = [], None
     while len(json.dumps(turns)) < 32000 and len(turns) < 100:
@@ -98,11 +98,15 @@ async def select(backend, params, state_dir):
         if budget['usage_blocked']:
             raise RuntimeError('Codex reports a usage limit. No turn was started.')
     route = await asyncio.to_thread(choose, key, routes, user_request(params), context,
-                                    settings['jev_model'], budget)
+                                    settings['jev_model'], budget, settings['routing_preference'],
+                                    settings['maximum_effort'])
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     audit(state_dir / f'{thread_id}.jsonl', {'event': 'route', 'thread_id': thread_id,
           'model': route['model'], 'effort': route['effort'], 'confidence': route['confidence'],
-          'usage_preference': budget['preference'] if budget else 'normal'})
+          'routing_preference': settings['routing_preference'], 'task_class': route.get('task_class'),
+          'maximum_effort': settings['maximum_effort'],
+          'policy_adjusted': route.get('policy_adjusted', False),
+          'quota_pressure': budget['pressure_level'] if budget else 'unknown'})
     return route
 
 
