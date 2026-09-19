@@ -5,7 +5,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from install import installed_codex
+from install import installed_codex, prompt_key
 
 
 def enable_auto(thread_id):
@@ -15,6 +15,7 @@ def enable_auto(thread_id):
 
 
 def run(args):
+    prompt_key()
     codex = installed_codex()
     with tempfile.TemporaryDirectory(prefix='jev-codex-') as directory:
         root = Path(directory)

@@ -106,6 +106,22 @@ class InstallTests(unittest.TestCase):
             install.uninstall()
         self.assertEqual(command.read_text(), 'changed after installation')
 
+    def test_key_can_be_deferred_and_added_interactively(self):
+        credential = config_path().with_name('credentials.env')
+        with patch('sys.stdin.isatty', return_value=False):
+            self.assertIsNone(install.prompt_key(required=False))
+        with patch('sys.stdout', new_callable=io.StringIO):
+            install.install(str(self.binary), None, change_shell=False)
+        self.assertFalse(credential.exists())
+        with patch('sys.stdin.isatty', return_value=True), \
+             patch('getpass.getpass', return_value='new-key'), \
+             patch('install.verify_jev') as check, \
+             patch('sys.stdout', new_callable=io.StringIO):
+            self.assertEqual(install.prompt_key(), 'new-key')
+        check.assert_called_once_with('new-key')
+        self.assertEqual(credential.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(install.prompt_key(), 'new-key')
+
     def test_failed_update_restores_previous_installation_and_shell_link(self):
         target = self.home / 'shell-config'
         target.write_text('# keep this\n')

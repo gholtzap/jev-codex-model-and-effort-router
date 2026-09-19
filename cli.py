@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from install import installed_codex, uninstall, verify
+from install import installed_codex, prompt_key, uninstall, verify
 from jev_client import load_key
 from settings import config_path, default_env_file, load_settings, private_write, set_setting
 
@@ -82,6 +82,10 @@ def main():
             print(f'Original Codex: {binary}\nSettings: {config_path()}\nTypeSafe key: configured')
             if not options.offline:
                 verify(binary, key)
+            return 0
+        if args == ['auth', 'login']:
+            prompt_key(force=True)
+            print('TypeSafe API key saved.')
             return 0
         if args[:1] == ['uninstall']:
             parser = argparse.ArgumentParser(prog='jev-codex uninstall')

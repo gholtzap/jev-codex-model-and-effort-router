@@ -21,6 +21,7 @@ FILES = ('cli.py', 'router.py', 'appserver.py', 'jev_client.py', 'usage.py',
          'settings.py', 'install.py', 'native.py', 'native_proxy.py', 'menu_bar.swift')
 MARKER = '# Jev Codex managed launcher'
 WEBSOCKETS_VERSION = '16.1.1'
+TYPESAFE_CONSOLE = 'https://console.typesafe.ai'
 
 
 def build_settings_app(root):
@@ -85,10 +86,36 @@ def verify(codex, key, check_jev=True):
     finally:
         server.close()
     if check_jev:
-        result = ask(key, 'Installation check.', {'check': {'type': 'choice',
-                     'instructions': 'Select ready.', 'criteria': {'ready': 'The connection is ready.'}}})
-        validate_choice(result['answers'].get('check'), {'ready'})
-        print('TypeSafe connection passed.')
+        verify_jev(key)
+
+
+def verify_jev(key):
+    result = ask(key, 'Installation check.', {'check': {'type': 'choice',
+                 'instructions': 'Select ready.', 'criteria': {'ready': 'The connection is ready.'}}})
+    validate_choice(result['answers'].get('check'), {'ready'})
+    print('TypeSafe connection passed.')
+
+
+def prompt_key(force=False, required=True, save=True):
+    credential = config_path().with_name('credentials.env')
+    if not force:
+        for key_file in (credential, Path(__file__).with_name('.env')):
+            try:
+                return load_key(key_file)
+            except (FileNotFoundError, JevError):
+                continue
+    if not sys.stdin.isatty():
+        if required:
+            raise RuntimeError('Run jev-codex auth login in a terminal to add your TypeSafe API key.')
+        return None
+    print(f'Create or copy your TypeSafe API key at {TYPESAFE_CONSOLE}')
+    key = getpass.getpass('TypeSafe API key (input hidden): ').strip()
+    if not key:
+        raise RuntimeError('A TypeSafe API key is required.')
+    verify_jev(key)
+    if save:
+        atomic_write(credential, 'JEV_API_KEY=' + shlex.quote(key) + '\n')
+    return key
 
 
 def launcher(entry, mode):
@@ -175,7 +202,8 @@ def install(codex, key, wrap=None, change_shell=True):
         if not settings_file.exists():
             writes[str(settings_file)] = json.dumps(load_settings(), indent=2) + '\n'
         credential = settings_file.with_name('credentials.env')
-        writes[str(credential)] = 'JEV_API_KEY=' + shlex.quote(key) + '\n'
+        if key is not None:
+            writes[str(credential)] = 'JEV_API_KEY=' + shlex.quote(key) + '\n'
         record = {'codex_path': codex, 'wrap_codex': wrap, 'release': version,
                   'commands': {p: digest(t) for p, t in launchers.items()}, 'shell': shell_records}
         writes[str(manifest_path)] = json.dumps(record, indent=2) + '\n'
@@ -213,6 +241,8 @@ def install(codex, key, wrap=None, change_shell=True):
     print('Defaults: balanced routing, automatic maximum effort, 10% reserve, usage display on. Existing settings were kept.')
     if wrap:
         print('The codex command keeps the standard terminal UI and routes user turns through Jev.')
+    if key is None:
+        print('Your TypeSafe API key will be requested when you first run codex.')
     if sys.platform == 'darwin':
         print('Run jev-codex settings to open the menu-bar settings app.')
     print('Open a new terminal, enter your project directory, and run ' + ('codex.' if wrap else 'jev-codex.'))
@@ -270,18 +300,11 @@ def main():
         parser.error('Python 3.10 or later on macOS or Linux is required.')
     try:
         codex = find_codex(args.codex_path) if args.codex_path else installed_codex()
-        key_file = args.env_file or config_path().with_name('credentials.env')
-        if not key_file.exists() and not args.env_file:
-            key_file = Path(__file__).with_name('.env')
-        try:
-            key = load_key(key_file)
-        except (FileNotFoundError, JevError):
-            if args.env_file or not sys.stdin.isatty():
-                raise RuntimeError('Provide JEV_API_KEY in the environment or use --env-file PATH. Do not put keys in command arguments.') from None
-            key = getpass.getpass('TypeSafe API key (input hidden): ').strip()
-            if not key:
-                raise RuntimeError('A TypeSafe API key is required.')
-        verify(codex, key)
+        if args.env_file:
+            key = load_key(args.env_file)
+        else:
+            key = prompt_key(required=False, save=False)
+        verify(codex, key, check_jev=key is not None)
         install(codex, key, args.wrap_codex, not args.no_shell)
         return 0
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
