@@ -6,7 +6,14 @@ Copy and paste this into your coding agent:
 
 The agent should clone the repository and run `python3 install.py`. The installer securely asks for a TypeSafe API key when needed, verifies Codex sign-in and both service connections, and configures the standard `codex` command to route through Jev. It keeps the original command available as `codex-original`.
 
-Use `python3 install.py --no-wrap-codex` only when you want a separate `jev-codex` command without changing how `codex` starts.
+## Setup Options
+
+| Option | Purpose |
+| --- | --- |
+| `--no-wrap-codex` | Install `jev-codex` without replacing the `codex` command. |
+| `--no-shell` | Do not update shell startup files. |
+| `--codex-path PATH` | Use a specific Codex executable. |
+| `--env-file PATH` | Read `JEV_API_KEY` from a file. |
 
 ## What does it do?
 
