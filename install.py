@@ -117,7 +117,7 @@ def install_vendor(path):
         raise RuntimeError('Could not install the WebSocket dependency: ' + result.stderr[-1000:])
 
 
-def install(codex, key, wrap=False, change_shell=True):
+def install(codex, key, wrap=None, change_shell=True):
     root = data_dir()
     bindir = Path.home() / '.local/bin'
     if root.exists() and not (root / '.managed').exists():
@@ -128,16 +128,23 @@ def install(codex, key, wrap=False, change_shell=True):
         fcntl.flock(lock, fcntl.LOCK_EX)
         manifest_path = root / 'install.json'
         old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-        wrap = wrap or old.get('wrap_codex', False)
+        if wrap is None:
+            wrap = old.get('wrap_codex', True)
         commands = {'jev-codex': '', 'codex-original': '--original'}
         if wrap:
             commands['codex'] = '--codex-wrapper'
         launchers = {str(bindir / name): launcher(root / 'current/cli.py', mode)
                      for name, mode in commands.items()}
+        old_commands = old.get('commands', {})
         for filename in launchers:
             path = Path(filename)
-            if path.is_symlink() or (path.exists() and digest(path.read_text()) != old.get('commands', {}).get(filename)):
+            if path.is_symlink() or (path.exists() and digest(path.read_text()) != old_commands.get(filename)):
                 raise RuntimeError(f'Refusing to replace an existing command: {path}')
+        obsolete = set(old_commands) - set(launchers)
+        for filename in obsolete:
+            path = Path(filename)
+            if path.is_symlink() or (path.exists() and digest(path.read_text()) != old_commands[filename]):
+                raise RuntimeError(f'Refusing to remove a changed command: {path}')
         shell_records = old.get('shell', {})
         block = '\n# Begin Jev Codex PATH\nexport PATH=' + shlex.quote(str(bindir)) + ':"$PATH"\n# End Jev Codex PATH\n'
         writes = dict(launchers)
@@ -178,12 +185,16 @@ def install(codex, key, wrap=False, change_shell=True):
             raise RuntimeError('The installed current path must be a managed symbolic link.')
         old_target = os.readlink(current) if current.is_symlink() else None
         try:
-            for filename, text in writes.items():
+            for filename in set(writes) | obsolete:
                 path = Path(filename)
                 backup[filename] = (path.read_text(), path.stat().st_mode & 0o777) if path.exists() else None
+            for filename, text in writes.items():
+                path = Path(filename)
                 mode = 0o755 if filename in launchers else (backup[filename][1] if filename in shell_records and backup[filename] else 0o600)
                 # Resolve shell symlinks so a user's dotfile link is preserved.
                 atomic_write(path.resolve() if filename in shell_records else path, text, mode)
+            for filename in obsolete:
+                Path(filename).unlink(missing_ok=True)
             link = root / 'current.next'
             link.unlink(missing_ok=True)
             link.symlink_to(release)
@@ -246,7 +257,11 @@ def uninstall(purge=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wrap-codex', action='store_true', help='Let the codex command start this terminal client')
+    wrapping = parser.add_mutually_exclusive_group()
+    wrapping.add_argument('--wrap-codex', action='store_true', dest='wrap_codex', default=None,
+                          help='Route the codex command through Jev (default for a new installation)')
+    wrapping.add_argument('--no-wrap-codex', action='store_false', dest='wrap_codex',
+                          help='Install only the separate jev-codex command')
     parser.add_argument('--no-shell', action='store_true', help='Do not add ~/.local/bin to shell startup files')
     parser.add_argument('--codex-path', help='Path to the original Codex executable')
     parser.add_argument('--env-file', type=Path, help='Read an existing TypeSafe key file without displaying it')

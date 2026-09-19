@@ -44,7 +44,7 @@ class InstallTests(unittest.TestCase):
         rc = self.home / '.zshrc'
         rc.write_text('# existing shell settings\n')
         with patch('sys.stdout', new_callable=io.StringIO):
-            install.install(str(self.binary), 'test-key', wrap=True)
+            install.install(str(self.binary), 'test-key')
         self.assertEqual(self.run_cli('doctor', '--offline').returncode, 0)
         if sys.platform == 'darwin':
             self.assertTrue((data_dir() / 'current/Jev Codex Settings.app/Contents/MacOS/JevCodexSettings').is_file())
@@ -77,6 +77,12 @@ class InstallTests(unittest.TestCase):
         shell = subprocess.run(['/bin/sh', '-c', f'. {shlex.quote(str(rc))}; command -v codex'],
                                text=True, capture_output=True, timeout=10)
         self.assertEqual(shell.stdout.strip(), str(self.bindir / 'codex'))
+        with patch('sys.stdout', new_callable=io.StringIO):
+            install.install(str(self.binary), 'updated-key', wrap=False)
+        self.assertFalse((self.bindir / 'codex').exists())
+        with patch('sys.stdout', new_callable=io.StringIO):
+            install.install(str(self.binary), 'updated-key', wrap=True)
+        self.assertTrue((self.bindir / 'codex').exists())
         with patch('sys.stdout', new_callable=io.StringIO):
             install.uninstall(purge=True)
         self.assertEqual(rc.read_text(), '# existing shell settings\n')
