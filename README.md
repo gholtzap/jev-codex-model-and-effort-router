@@ -4,10 +4,6 @@ Copy and paste this into your coding agent:
 
 > Set up and verify https://github.com/gholtzap/jev-codex-model-and-effort-router with default settings.
 
-The agent should clone the repository and run `python3 install.py`. The installer verifies Codex sign-in and configures the standard `codex` command to route through Jev. It keeps the original command available as `codex-original`.
-
-If setup runs without an interactive terminal, the first `codex` start asks for the TypeSafe API key with hidden input, validates it, and saves it in a user-only file. Run `jev-codex auth login` to replace the saved key.
-
 ## Setup Options
 
 | Option | Purpose |
