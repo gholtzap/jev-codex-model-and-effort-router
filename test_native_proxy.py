@@ -99,7 +99,7 @@ class NativeProxyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn('Jev routing failed', reply['error']['message'])
                     self.assertFalse(any(x.get('method') == 'turn/start' for x in received))
 
-    async def test_native_model_selection_pins_the_thread(self):
+    async def test_native_model_selection_does_not_disable_routing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             backend_socket, front_socket = root / 'backend.sock', root / 'front.sock'
@@ -114,25 +114,23 @@ class NativeProxyTests(unittest.IsolatedAsyncioTestCase):
                             if request['method'] == 'thread/read' else {}
                         await connection.send(json.dumps({'id': request['id'], 'result': result}))
 
-            with patch('native_proxy.select') as select:
+            async def choice(*_):
+                return {'model': 'gpt-5.6-luna', 'effort': 'low'}
+
+            with patch('native_proxy.select', side_effect=choice) as select:
               async with unix_serve(backend, str(backend_socket), compression=None), \
                          unix_serve(lambda c: relay(c, backend_socket, root), str(front_socket), compression=None):
                 async with unix_connect(str(front_socket), compression=None) as client:
                     await client.send(json.dumps({'id': 1, 'method': 'thread/settings/update',
-                        'params': {'threadId': 'thread-1', 'model': 'gpt-5.6-luna', 'effort': 'low'}}))
+                        'params': {'threadId': 'thread-1', 'model': 'gpt-5.6-sol', 'effort': 'high'}}))
                     self.assertEqual(json.loads(await client.recv())['id'], 1)
-                    self.assertFalse((root / 'thread-1.pin').exists())
-                    await client.send(json.dumps({'id': 2, 'method': 'thread/settings/update',
-                        'params': {'threadId': 'thread-1', 'model': 'gpt-5.6-terra', 'effort': 'medium'}}))
-                    self.assertEqual(json.loads(await client.recv())['id'], 2)
-                    self.assertTrue((root / 'thread-1.pin').exists())
-                    await client.send(json.dumps({'id': 3, 'method': 'turn/start', 'params': {
+                    await client.send(json.dumps({'id': 2, 'method': 'turn/start', 'params': {
                         'threadId': 'thread-1', 'input': [{'type': 'text', 'text': 'Use this model'}],
-                        'model': 'gpt-5.6-terra', 'effort': 'medium'}}))
-                    self.assertEqual(json.loads(await client.recv())['id'], 3)
+                        'model': 'gpt-5.6-sol', 'effort': 'high'}}))
+                    self.assertEqual(json.loads(await client.recv())['id'], 2)
                     sent = next(x['params'] for x in received if x.get('method') == 'turn/start')
-                    self.assertEqual((sent['model'], sent['effort']), ('gpt-5.6-terra', 'medium'))
-                    select.assert_not_called()
+                    self.assertEqual((sent['model'], sent['effort']), ('gpt-5.6-luna', 'low'))
+                    select.assert_awaited_once()
 
 
 if __name__ == '__main__':

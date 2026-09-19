@@ -15,7 +15,7 @@ from websockets.exceptions import ConnectionClosed
 
 from jev_client import load_key
 from router import audit, choose, context_for, routes_for
-from settings import default_env_file, load_settings, private_write
+from settings import default_env_file, load_settings
 from usage import usage_budget
 
 
@@ -109,26 +109,12 @@ async def select(backend, params, state_dir):
 async def relay(client, backend_socket, state_dir):
     async with unix_connect(str(backend_socket), max_size=None, compression=None) as upstream, Backend(backend_socket) as side:
         pending_routes = {}
-        pending_manual = {}
 
         async def to_backend():
             async for raw in client:
                 message = json.loads(raw)
                 params = message.get('params', {})
-                if message.get('method') == 'thread/settings/update' and (
-                    params.get('model') is not None or params.get('effort') is not None):
-                    try:
-                        thread = (await side.call('thread/read', {
-                            'threadId': params['threadId'], 'includeTurns': False}))['thread']
-                        requested = (params.get('model') or thread.get('model'),
-                                     params.get('effort') or thread.get('reasoningEffort'))
-                        current = (thread.get('model'), thread.get('reasoningEffort'))
-                    except Exception:
-                        requested, current = True, False
-                    if requested != current:
-                        pending_manual[message['id']] = params['threadId']
-                if message.get('method') == 'turn/start' and user_request(params) is not None and not (
-                    state_dir / f"{params['threadId']}.pin").exists():
+                if message.get('method') == 'turn/start' and user_request(params) is not None:
                     try:
                         route = await asyncio.wait_for(select(side, params, state_dir), 120)
                     except Exception as error:
@@ -147,13 +133,6 @@ async def relay(client, backend_socket, state_dir):
         async def to_client():
             async for raw in upstream:
                 message = json.loads(raw)
-                manual = pending_manual.pop(message.get('id'), None)
-                if manual and 'result' in message:
-                    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-                    pin = state_dir / f'{manual}.pin'
-                    if not pin.exists():
-                        private_write(pin, {'manual': True})
-                        audit(state_dir / f'{manual}.jsonl', {'event': 'manual_model', 'thread_id': manual})
                 pending = pending_routes.pop(message.get('id'), None)
                 if pending and 'result' in message:
                     thread_id, route = pending
