@@ -9,7 +9,7 @@ from websockets.asyncio.client import unix_connect
 from websockets.asyncio.server import unix_serve
 
 from native_proxy import relay, user_request
-from settings import DEFAULTS, clear_route_pin, load_route_pin, save_route_pin
+from settings import DEFAULTS, load_route_pin, request_auto_route, save_route_pin
 
 
 class NativeProxyTests(unittest.IsolatedAsyncioTestCase):
@@ -156,7 +156,7 @@ class NativeProxyTests(unittest.IsolatedAsyncioTestCase):
                         'threadId': 'thread-1', 'input': [{'type': 'text', 'text': 'Continue'}],
                         'model': 'gpt-5.6-sol', 'effort': 'high'}}))
                     self.assertEqual(json.loads(await client.recv())['id'], 2)
-                    clear_route_pin(root, 'thread-1')
+                    request_auto_route(root, 'thread-1')
                     await client.send(json.dumps({'id': 3, 'method': 'turn/start', 'params': {
                         'threadId': 'thread-1', 'input': [{'type': 'text', 'text': 'Select again'}],
                         'model': 'gpt-5.6-sol', 'effort': 'high'}}))
@@ -208,6 +208,39 @@ class NativeProxyTests(unittest.IsolatedAsyncioTestCase):
                                              ('gpt-5.6-terra', 'medium'))
                         else:
                             self.assertIsNone(pin)
+
+    async def test_existing_thread_adopts_current_route_without_calling_jev(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend_socket, front_socket = root / 'backend.sock', root / 'front.sock'
+
+            async def backend(connection):
+                async for raw in connection:
+                    request = json.loads(raw)
+                    if 'id' not in request:
+                        continue
+                    if request['method'] == 'thread/read':
+                        result = {'thread': {'model': 'gpt-5.6-sol', 'reasoningEffort': 'high'}}
+                    elif request['method'] == 'thread/turns/list':
+                        result = {'data': [{'id': 'old-turn'}], 'nextCursor': None}
+                    elif request['method'] == 'turn/start':
+                        result = {'turn': {'id': 'new-turn'}}
+                    else:
+                        result = {}
+                    await connection.send(json.dumps({'id': request['id'], 'result': result}))
+
+            with patch('native_proxy.select') as select, \
+                 patch('native_proxy.load_settings', return_value=self.settings()):
+              async with unix_serve(backend, str(backend_socket), compression=None), \
+                         unix_serve(lambda c: relay(c, backend_socket, root), str(front_socket), compression=None):
+                async with unix_connect(str(front_socket), compression=None) as client:
+                    await client.send(json.dumps({'id': 1, 'method': 'turn/start', 'params': {
+                        'threadId': 'thread-1', 'input': [{'type': 'text', 'text': 'Continue'}],
+                        'model': 'gpt-5.6-sol', 'effort': 'high'}}))
+                    self.assertEqual(json.loads(await client.recv())['id'], 1)
+                    select.assert_not_called()
+                    self.assertEqual(load_route_pin(root, 'thread-1'), {
+                        'model': 'gpt-5.6-sol', 'effort': 'high', 'source': 'existing'})
 
 
 if __name__ == '__main__':

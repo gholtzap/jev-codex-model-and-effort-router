@@ -22,6 +22,8 @@ If no key is available, the first `codex` start lets the user add one, continue 
 
 [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev) selects the model and effort for the first task in a Codex thread. That route stays pinned for later turns so the thread can reuse its model cache. Greetings and other social messages do not set the pin.
 
+When this version first sees an existing thread, it keeps that thread's current model and effort. This avoids an upgrade-time route change in a long conversation.
+
 In the default thread mode, manual model and effort changes in Codex take effect and become the new pin. Run `jev-codex auto on THREAD_ID` to let Jev select a new pin on the next turn.
 
 The default `routing_mode` is `thread`. Set it to `turn` if you want Jev to select a route before every turn:
@@ -29,6 +31,8 @@ The default `routing_mode` is `thread`. Set it to `turn` if you want Jev to sele
 ```sh
 jev-codex config set routing_mode turn
 ```
+
+Routing frequency changes apply before the next turn. Routing preference, maximum effort, and pool changes apply when Jev next selects a pin. Use `jev-codex auto on THREAD_ID` to apply those choices to an existing thread.
 
 ## Menu Bar App
 

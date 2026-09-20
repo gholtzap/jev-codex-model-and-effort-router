@@ -7,6 +7,7 @@ import re
 import tempfile
 from pathlib import Path
 
+VERSION = '0.4.0'
 DEFAULTS = {'routing_preference': 'balanced', 'maximum_effort': 'automatic',
             'routing_mode': 'thread',
             'usage_policy': 'balanced', 'reserve_percent': 10, 'show_usage': True,
@@ -61,7 +62,7 @@ def load_route_pin(root, thread_id):
     value = json.loads(path.read_text())
     if (not isinstance(value, dict) or set(value) != {'model', 'effort', 'source'} or
             any(not isinstance(value.get(name), str) or not value[name]
-                for name in ('model', 'effort')) or value.get('source') not in ('jev', 'manual')):
+                for name in ('model', 'effort')) or value.get('source') not in ('jev', 'manual', 'existing')):
         raise ValueError(f'Invalid route pin: {path}. Run jev-codex auto on {thread_id} to reset it.')
     return value
 
@@ -69,14 +70,24 @@ def load_route_pin(root, thread_id):
 def save_route_pin(root, thread_id, model, effort, source):
     if not isinstance(model, str) or not model or not isinstance(effort, str) or not effort:
         raise ValueError('A route pin needs a model and effort.')
-    if source not in ('jev', 'manual'):
-        raise ValueError('A route pin source must be jev or manual.')
+    if source not in ('jev', 'manual', 'existing'):
+        raise ValueError('A route pin source must be jev, manual, or existing.')
     private_write(thread_state_path(root, thread_id, '.pin'), {
         'model': model, 'effort': effort, 'source': source})
+    thread_state_path(root, thread_id, '.auto').unlink(missing_ok=True)
 
 
 def clear_route_pin(root, thread_id):
     thread_state_path(root, thread_id, '.pin').unlink(missing_ok=True)
+
+
+def request_auto_route(root, thread_id):
+    clear_route_pin(root, thread_id)
+    atomic_write(thread_state_path(root, thread_id, '.auto'), 'select\n')
+
+
+def auto_route_requested(root, thread_id):
+    return thread_state_path(root, thread_id, '.auto').exists()
 
 
 def validate(values):

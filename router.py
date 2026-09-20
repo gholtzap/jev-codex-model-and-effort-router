@@ -95,7 +95,6 @@ def agent_instructions(server, overrides, settings_file):
         'router settings, use the following local command and read settings back after saving: '
         f'{command} show; {command} set NAME VALUE. '
         'Available settings: routing_preference (lowest_usage, lower_usage, balanced, higher_quality, highest_quality), '
-        'routing_mode (thread or turn), '
         'maximum_effort (automatic, high, xhigh, max), '
         'usage_policy (quality, balanced, conserve), '
         'reserve_percent (0 to less than 100), '

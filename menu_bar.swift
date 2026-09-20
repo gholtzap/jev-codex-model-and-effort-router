@@ -131,6 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             selected: store.string("routing_mode", default: "thread"),
             action: #selector(selectRoutingMode(_:))
         ))
+        let timing = NSMenuItem(title: "Route choices apply at the next selection", action: nil, keyEquivalent: "")
+        timing.isEnabled = false
+        menu.addItem(timing)
         menu.addItem(submenu(
             title: "Routing preference",
             values: [("Lowest usage", "lowest_usage"), ("Lower usage", "lower_usage"),

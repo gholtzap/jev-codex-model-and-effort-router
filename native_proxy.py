@@ -15,8 +15,8 @@ from websockets.exceptions import ConnectionClosed
 
 from jev_client import load_key
 from router import audit, choose, context_for, routes_for
-from settings import (default_env_file, load_route_pin, load_settings, save_route_pin,
-                      thread_state_path)
+from settings import (auto_route_requested, default_env_file, load_route_pin, load_settings,
+                      request_auto_route, save_route_pin, thread_state_path, VERSION)
 from usage import usage_budget
 
 
@@ -29,7 +29,7 @@ class Backend:
     async def __aenter__(self):
         self.connection = await unix_connect(str(self.socket), max_size=None, compression=None)
         await self.call('initialize', {'clientInfo': {
-            'name': 'jev_codex_route', 'title': 'Jev Codex route', 'version': '0.3.0'},
+            'name': 'jev_codex_route', 'title': 'Jev Codex route', 'version': VERSION},
             'capabilities': {'experimentalApi': True}})
         await self.connection.send(json.dumps({'method': 'initialized', 'params': {}}))
         return self
@@ -97,6 +97,15 @@ async def current_route(backend, thread_id):
         return None
     model, effort = thread.get('model'), thread.get('reasoningEffort')
     return {'model': model, 'effort': effort} if model and effort else None
+
+
+async def thread_has_turns(backend, thread_id):
+    try:
+        page = await backend.call('thread/turns/list', {
+            'threadId': thread_id, 'limit': 1, 'itemsView': 'notLoaded'})
+        return bool(page.get('data'))
+    except Exception:
+        return False
 
 
 async def select(backend, params, state_dir, settings=None):
@@ -167,24 +176,36 @@ async def relay(client, backend_socket, state_dir):
                             apply_route(params, pin)
                             pending_routes[message['id']] = {
                                 'thread_id': thread_id, 'expected': pin, 'source': 'pinned'}
-                        else:
+                        elif settings['routing_mode'] == 'thread':
                             current = await current_route(side, thread_id)
-                            if (settings['routing_mode'] == 'thread' and current and
-                                    route_changed(params, current)):
+                            if current and route_changed(params, current):
                                 pending_routes[message['id']] = {
                                     'thread_id': thread_id, 'source': 'manual'}
+                            elif (current and not auto_route_requested(state_dir, thread_id) and
+                                  await thread_has_turns(side, thread_id)):
+                                save_route_pin(state_dir, thread_id, current['model'],
+                                               current['effort'], 'existing')
+                                pending_routes[message['id']] = {
+                                    'thread_id': thread_id, 'expected': current,
+                                    'source': 'pinned'}
                             else:
                                 route = await asyncio.wait_for(
                                     select(side, params, state_dir, settings), 120)
-                                if (settings['routing_mode'] == 'thread' and
-                                        route.get('request_kind') == 'conversation'):
+                                if route.get('request_kind') == 'conversation':
+                                    request_auto_route(state_dir, thread_id)
                                     audit(thread_state_path(state_dir, thread_id, '.jsonl'), {
                                         'event': 'route_deferred', 'thread_id': thread_id})
                                 else:
                                     apply_route(params, route)
                                     pending_routes[message['id']] = {
                                         'thread_id': thread_id, 'expected': route,
-                                        'source': 'jev' if settings['routing_mode'] == 'thread' else 'turn'}
+                                        'source': 'jev'}
+                        else:
+                            route = await asyncio.wait_for(
+                                select(side, params, state_dir, settings), 120)
+                            apply_route(params, route)
+                            pending_routes[message['id']] = {
+                                'thread_id': thread_id, 'expected': route, 'source': 'turn'}
                     except Exception as error:
                         await client.send(json.dumps({'id': message['id'], 'error': {
                             'code': -32000, 'message': f'Jev routing failed: {error}'}}))

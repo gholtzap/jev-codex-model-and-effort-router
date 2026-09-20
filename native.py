@@ -7,11 +7,11 @@ from pathlib import Path
 
 from install import installed_codex, prompt_key, uninstall
 from jev_client import JevError, load_key
-from settings import clear_route_pin, default_env_file, state_dir
+from settings import default_env_file, request_auto_route, state_dir
 
 
 def enable_auto(thread_id):
-    clear_route_pin(state_dir(), thread_id)
+    request_auto_route(state_dir(), thread_id)
 
 
 def key_action():

@@ -15,8 +15,8 @@ from cli import first_argument
 from native import enable_auto, key_action, run as native_run
 from router import main
 from jev_client import JevError
-from settings import (config_path, data_dir, load_route_pin, load_settings, save_route_pin,
-                      set_setting, state_dir, validate)
+from settings import (auto_route_requested, config_path, data_dir, load_route_pin, load_settings,
+                      save_route_pin, set_setting, state_dir, validate)
 
 
 class InstallTests(unittest.TestCase):
@@ -51,6 +51,7 @@ class InstallTests(unittest.TestCase):
         rc.write_text('# existing shell settings\n')
         with patch('sys.stdout', new_callable=io.StringIO):
             install.install(str(self.binary), 'test-key')
+        self.assertEqual(self.run_cli('--version').stdout.strip(), 'jev-codex 0.4.0')
         self.assertEqual(self.run_cli('doctor', '--offline').returncode, 0)
         if sys.platform == 'darwin':
             self.assertTrue((data_dir() / 'current/Jev Codex Settings.app/Contents/MacOS/JevCodexSettings').is_file())
@@ -407,6 +408,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(load_route_pin(state_dir(), 'thr_123-test')['source'], 'manual')
         enable_auto('thr_123-test')
         self.assertIsNone(load_route_pin(state_dir(), 'thr_123-test'))
+        self.assertTrue(auto_route_requested(state_dir(), 'thr_123-test'))
         with self.assertRaises(ValueError):
             enable_auto('../thread')
 
