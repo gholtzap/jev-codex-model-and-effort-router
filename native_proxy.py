@@ -15,7 +15,8 @@ from websockets.exceptions import ConnectionClosed
 
 from jev_client import load_key
 from router import audit, choose, context_for, routes_for
-from settings import default_env_file, load_settings
+from settings import (default_env_file, load_route_pin, load_settings, save_route_pin,
+                      thread_state_path)
 from usage import usage_budget
 
 
@@ -69,8 +70,37 @@ def user_request(params):
     return '[Attachment without text]' if params['input'] else None
 
 
-async def select(backend, params, state_dir):
-    settings = load_settings()
+def request_route(params):
+    return {name: params[name] for name in ('model', 'effort')
+            if isinstance(params.get(name), str) and params[name]}
+
+
+def route_changed(params, route):
+    requested = request_route(params)
+    return any(requested.get(name, route[name]) != route[name] for name in ('model', 'effort'))
+
+
+def apply_route(params, route):
+    params['model'] = route['model']
+    params['effort'] = route['effort']
+    mode = params.get('collaborationMode')
+    if isinstance(mode, dict) and isinstance(mode.get('settings'), dict):
+        mode['settings']['model'] = route['model']
+        mode['settings']['reasoning_effort'] = route['effort']
+
+
+async def current_route(backend, thread_id):
+    try:
+        thread = (await backend.call('thread/read', {
+            'threadId': thread_id, 'includeTurns': False}))['thread']
+    except Exception:
+        return None
+    model, effort = thread.get('model'), thread.get('reasoningEffort')
+    return {'model': model, 'effort': effort} if model and effort else None
+
+
+async def select(backend, params, state_dir, settings=None):
+    settings = settings or load_settings()
     key = load_key(default_env_file())
     models = await catalog(backend)
     routes = routes_for(models, settings['allow_model'], allowed_efforts=settings['allow_effort'])
@@ -101,9 +131,10 @@ async def select(backend, params, state_dir):
                                     settings['jev_model'], budget, settings['routing_preference'],
                                     settings['maximum_effort'])
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    audit(state_dir / f'{thread_id}.jsonl', {'event': 'route', 'thread_id': thread_id,
+    audit(thread_state_path(state_dir, thread_id, '.jsonl'), {'event': 'route', 'thread_id': thread_id,
           'model': route['model'], 'effort': route['effort'], 'confidence': route['confidence'],
           'routing_preference': settings['routing_preference'], 'task_class': route.get('task_class'),
+          'request_kind': route.get('request_kind'), 'routing_mode': settings['routing_mode'],
           'maximum_effort': settings['maximum_effort'],
           'policy_adjusted': route.get('policy_adjusted', False),
           'quota_pressure': budget['pressure_level'] if budget else 'unknown'})
@@ -118,20 +149,46 @@ async def relay(client, backend_socket, state_dir):
             async for raw in client:
                 message = json.loads(raw)
                 params = message.get('params', {})
+                if message.get('method') == 'thread/settings/update':
+                    settings = load_settings()
+                    if settings['routing_mode'] == 'thread' and request_route(params):
+                        pending_routes[message['id']] = {
+                            'thread_id': params['threadId'], 'source': 'manual'}
                 if message.get('method') == 'turn/start' and user_request(params) is not None:
                     try:
-                        route = await asyncio.wait_for(select(side, params, state_dir), 120)
+                        settings = load_settings()
+                        thread_id = params['threadId']
+                        pin = load_route_pin(state_dir, thread_id) \
+                            if settings['routing_mode'] == 'thread' else None
+                        if pin and route_changed(params, pin):
+                            pending_routes[message['id']] = {
+                                'thread_id': thread_id, 'source': 'manual'}
+                        elif pin:
+                            apply_route(params, pin)
+                            pending_routes[message['id']] = {
+                                'thread_id': thread_id, 'expected': pin, 'source': 'pinned'}
+                        else:
+                            current = await current_route(side, thread_id)
+                            if (settings['routing_mode'] == 'thread' and current and
+                                    route_changed(params, current)):
+                                pending_routes[message['id']] = {
+                                    'thread_id': thread_id, 'source': 'manual'}
+                            else:
+                                route = await asyncio.wait_for(
+                                    select(side, params, state_dir, settings), 120)
+                                if (settings['routing_mode'] == 'thread' and
+                                        route.get('request_kind') == 'conversation'):
+                                    audit(thread_state_path(state_dir, thread_id, '.jsonl'), {
+                                        'event': 'route_deferred', 'thread_id': thread_id})
+                                else:
+                                    apply_route(params, route)
+                                    pending_routes[message['id']] = {
+                                        'thread_id': thread_id, 'expected': route,
+                                        'source': 'jev' if settings['routing_mode'] == 'thread' else 'turn'}
                     except Exception as error:
                         await client.send(json.dumps({'id': message['id'], 'error': {
                             'code': -32000, 'message': f'Jev routing failed: {error}'}}))
                         continue
-                    params['model'] = route['model']
-                    params['effort'] = route['effort']
-                    mode = params.get('collaborationMode')
-                    if isinstance(mode, dict) and isinstance(mode.get('settings'), dict):
-                        mode['settings']['model'] = route['model']
-                        mode['settings']['reasoning_effort'] = route['effort']
-                    pending_routes[message['id']] = (params['threadId'], route)
                 await upstream.send(json.dumps(message))
 
         async def to_client():
@@ -139,23 +196,32 @@ async def relay(client, backend_socket, state_dir):
                 message = json.loads(raw)
                 pending = pending_routes.pop(message.get('id'), None)
                 if pending and 'result' in message:
-                    thread_id, route = pending
-                    try:
-                        thread = (await side.call('thread/read', {
-                            'threadId': thread_id, 'includeTurns': False}))['thread']
-                        actual = (thread.get('model'), thread.get('reasoningEffort'))
-                    except Exception as error:
-                        actual = ('unverified', type(error).__name__)
-                    if actual != (route['model'], route['effort']):
-                        audit(state_dir / f'{thread_id}.jsonl', {'event': 'route_mismatch',
-                              'thread_id': thread_id, 'expected': [route['model'], route['effort']],
-                              'actual': actual})
+                    thread_id = pending['thread_id']
+                    actual_route = await current_route(side, thread_id)
+                    if pending['source'] == 'manual':
+                        if actual_route:
+                            save_route_pin(state_dir, thread_id, actual_route['model'],
+                                           actual_route['effort'], 'manual')
+                            audit(thread_state_path(state_dir, thread_id, '.jsonl'), {
+                                'event': 'manual_pin', 'thread_id': thread_id, **actual_route})
+                    elif not actual_route or any(
+                            actual_route[name] != pending['expected'][name]
+                            for name in ('model', 'effort')):
+                        actual = [actual_route['model'], actual_route['effort']] \
+                            if actual_route else ['unverified', 'unverified']
+                        expected = pending['expected']
+                        audit(thread_state_path(state_dir, thread_id, '.jsonl'), {
+                              'event': 'route_mismatch', 'thread_id': thread_id,
+                              'expected': [expected['model'], expected['effort']], 'actual': actual})
                         turn_id = message['result'].get('turn', {}).get('id')
                         if turn_id:
                             try:
                                 await side.call('turn/interrupt', {'threadId': thread_id, 'turnId': turn_id})
                             except Exception:
                                 pass
+                    elif pending['source'] == 'jev':
+                        save_route_pin(state_dir, thread_id, actual_route['model'],
+                                       actual_route['effort'], 'jev')
                 await client.send(raw)
 
         tasks = [asyncio.create_task(to_backend()), asyncio.create_task(to_client())]

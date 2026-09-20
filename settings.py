@@ -3,10 +3,12 @@ import fcntl
 import json
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 
 DEFAULTS = {'routing_preference': 'balanced', 'maximum_effort': 'automatic',
+            'routing_mode': 'thread',
             'usage_policy': 'balanced', 'reserve_percent': 10, 'show_usage': True,
             'usage_limit': 'codex', 'allow_model': None, 'allow_effort': None,
             'jev_model': 'jev-latest'}
@@ -20,6 +22,16 @@ def config_path():
 
 def data_dir():
     return Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'jev-codex'
+
+
+def state_dir():
+    return Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'jev-codex'
+
+
+def thread_state_path(root, thread_id, suffix):
+    if not isinstance(thread_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', thread_id):
+        raise ValueError('Provide a Codex thread ID.')
+    return Path(root) / f'{thread_id}{suffix}'
 
 
 def atomic_write(path, text, mode=0o600):
@@ -42,6 +54,31 @@ def private_write(path, value):
     atomic_write(path, json.dumps(value, indent=2) + '\n')
 
 
+def load_route_pin(root, thread_id):
+    path = thread_state_path(root, thread_id, '.pin')
+    if not path.exists():
+        return None
+    value = json.loads(path.read_text())
+    if (not isinstance(value, dict) or set(value) != {'model', 'effort', 'source'} or
+            any(not isinstance(value.get(name), str) or not value[name]
+                for name in ('model', 'effort')) or value.get('source') not in ('jev', 'manual')):
+        raise ValueError(f'Invalid route pin: {path}. Run jev-codex auto on {thread_id} to reset it.')
+    return value
+
+
+def save_route_pin(root, thread_id, model, effort, source):
+    if not isinstance(model, str) or not model or not isinstance(effort, str) or not effort:
+        raise ValueError('A route pin needs a model and effort.')
+    if source not in ('jev', 'manual'):
+        raise ValueError('A route pin source must be jev or manual.')
+    private_write(thread_state_path(root, thread_id, '.pin'), {
+        'model': model, 'effort': effort, 'source': source})
+
+
+def clear_route_pin(root, thread_id):
+    thread_state_path(root, thread_id, '.pin').unlink(missing_ok=True)
+
+
 def validate(values):
     if not isinstance(values, dict):
         raise ValueError('Settings must be an object containing only supported setting names.')
@@ -57,6 +94,8 @@ def validate(values):
     if result['routing_preference'] not in ('lowest_usage', 'lower_usage', 'balanced',
                                              'higher_quality', 'highest_quality'):
         raise ValueError('routing_preference must be lowest_usage, lower_usage, balanced, higher_quality, or highest_quality.')
+    if result['routing_mode'] not in ('thread', 'turn'):
+        raise ValueError('routing_mode must be thread or turn.')
     if result['maximum_effort'] not in ('automatic', 'high', 'xhigh', 'max'):
         raise ValueError('maximum_effort must be automatic, high, xhigh, or max.')
     if result['usage_policy'] not in ('quality', 'balanced', 'conserve'):

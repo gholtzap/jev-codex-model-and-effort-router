@@ -126,6 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(title)
         menu.addItem(.separator())
         menu.addItem(submenu(
+            title: "Routing frequency",
+            values: [("Once per thread", "thread"), ("Every turn", "turn")],
+            selected: store.string("routing_mode", default: "thread"),
+            action: #selector(selectRoutingMode(_:))
+        ))
+        menu.addItem(submenu(
             title: "Routing preference",
             values: [("Lowest usage", "lowest_usage"), ("Lower usage", "lower_usage"),
                      ("Balanced", "balanced"), ("Higher quality", "higher_quality"),
@@ -248,6 +254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         save(sender.representedObject as! String, key: "routing_preference")
     }
 
+    @objc private func selectRoutingMode(_ sender: NSMenuItem) {
+        save(sender.representedObject as! String, key: "routing_mode")
+    }
+
     @objc private func selectMaximumEffort(_ sender: NSMenuItem) {
         save(sender.representedObject as! String, key: "maximum_effort")
     }
@@ -294,11 +304,15 @@ enum JevCodexSettings {
         if CommandLine.arguments.contains("--check") {
             do {
                 let store = try SettingsStore(url: AppDelegate.configURL())
+                try store.set("turn", for: "routing_mode")
                 try store.set("highest_quality", for: "routing_preference")
                 try store.set("xhigh", for: "maximum_effort")
                 try store.set(["gpt-6-astra"], for: "allow_model")
                 try store.set(["low", "high"], for: "allow_effort")
                 try store.reload()
+                guard store.string("routing_mode", default: "") == "turn" else {
+                    throw SettingsError.message("The saved routing frequency did not reload.")
+                }
                 guard store.string("routing_preference", default: "") == "highest_quality" else {
                     throw SettingsError.message("The saved routing preference did not reload.")
                 }
