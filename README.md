@@ -40,4 +40,6 @@ On macOS, run `jev-codex settings` to Launch the Menu Bar app.
 
 You can use this app to choose the routing frequency, routing preference, maximum effort, and the model and effort pools from the menu bar.
 
+`Use remaining quota when routing` is on by default. Jev receives the live Codex allowance, and high quota pressure selects the least intensive route that still meets the task's capability floor. Turn it off to route only by task needs and your routing preference.
+
 <img width="374" height="250" alt="Screenshot 2026-09-19 at 11 57 45 AM" src="https://github.com/user-attachments/assets/4d6cd248-ddd4-4c89-b96e-d884b545dbc8" />

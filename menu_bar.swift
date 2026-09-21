@@ -161,6 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 title: "Effort pool", values: efforts, selected: selected("allow_effort", from: efforts),
                 action: #selector(toggleEffort(_:)), labels: labels))
         }
+        let usageRouting = NSMenuItem(title: "Use remaining quota when routing", action: #selector(toggleUsageRouting(_:)), keyEquivalent: "")
+        usageRouting.target = self
+        usageRouting.state = store.string("usage_policy", default: "balanced") == "quality" ? .off : .on
+        menu.addItem(usageRouting)
         let usage = NSMenuItem(title: "Show usage before each turn", action: #selector(toggleUsage(_:)), keyEquivalent: "")
         usage.target = self
         usage.state = store.bool("show_usage", default: true) ? .on : .off
@@ -277,6 +281,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         save(sender.state != .on, key: "show_usage")
     }
 
+    @objc private func toggleUsageRouting(_ sender: NSMenuItem) {
+        save(sender.state == .on ? "quality" : "balanced", key: "usage_policy")
+    }
+
     @objc private func showSettingsFile() {
         NSWorkspace.shared.activateFileViewerSelecting([store.url])
     }
@@ -310,6 +318,7 @@ enum JevCodexSettings {
                 try store.set("turn", for: "routing_mode")
                 try store.set("highest_quality", for: "routing_preference")
                 try store.set("xhigh", for: "maximum_effort")
+                try store.set("balanced", for: "usage_policy")
                 try store.set(["gpt-6-astra"], for: "allow_model")
                 try store.set(["low", "high"], for: "allow_effort")
                 try store.reload()
@@ -321,6 +330,9 @@ enum JevCodexSettings {
                 }
                 guard store.string("maximum_effort", default: "") == "xhigh" else {
                     throw SettingsError.message("The saved maximum effort did not reload.")
+                }
+                guard store.string("usage_policy", default: "") == "balanced" else {
+                    throw SettingsError.message("The saved usage routing setting did not reload.")
                 }
                 guard store.values["allow_model"] as? [String] == ["gpt-6-astra"],
                       store.values["allow_effort"] as? [String] == ["low", "high"] else {
