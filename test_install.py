@@ -12,10 +12,11 @@ from unittest.mock import Mock, patch
 import install
 import cli
 from cli import first_argument
-from native import key_action, run as native_run
+from native import enable_auto, key_action, run as native_run
 from router import main
 from jev_client import JevError
-from settings import config_path, data_dir, load_settings, set_setting, validate
+from settings import (auto_route_requested, config_path, data_dir, load_route_pin, load_settings,
+                      save_route_pin, set_setting, state_dir, validate)
 
 
 class InstallTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class InstallTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {'HOME': str(self.home), 'SHELL': '/bin/zsh',
                              'XDG_CONFIG_HOME': str(self.home / '.config'),
                              'XDG_DATA_HOME': str(self.home / '.local/share'),
+                             'XDG_STATE_HOME': str(self.home / '.local/state'),
                              'ZDOTDIR': str(self.home)}, clear=False)
         self.env.start()
         self.real_install_vendor = install.install_vendor
@@ -49,6 +51,7 @@ class InstallTests(unittest.TestCase):
         rc.write_text('# existing shell settings\n')
         with patch('sys.stdout', new_callable=io.StringIO):
             install.install(str(self.binary), 'test-key')
+        self.assertEqual(self.run_cli('--version').stdout.strip(), 'jev-codex 0.4.0')
         self.assertEqual(self.run_cli('doctor', '--offline').returncode, 0)
         if sys.platform == 'darwin':
             self.assertTrue((data_dir() / 'current/Jev Codex Settings.app/Contents/MacOS/JevCodexSettings').is_file())
@@ -386,16 +389,28 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(validate({'economy': 'medium'})['routing_preference'], 'balanced')
         for preference in ('lowest_usage', 'lower_usage', 'balanced', 'higher_quality', 'highest_quality'):
             self.assertEqual(validate({'routing_preference': preference})['routing_preference'], preference)
+        for mode in ('thread', 'turn'):
+            self.assertEqual(validate({'routing_mode': mode})['routing_mode'], mode)
         for effort in ('automatic', 'high', 'xhigh', 'max'):
             self.assertEqual(validate({'maximum_effort': effort})['maximum_effort'], effort)
         self.assertEqual(validate({'allow_effort': ['low', 'max']})['allow_effort'], ['low', 'max'])
         for values in ({'show_usage': 'false'}, {'reserve_percent': True}, {'reserve_percent': float('nan')},
                        {'allow_model': []}, {'unknown': 1}, {'usage_policy': []},
                        {'economy': 'maximum'}, {'routing_preference': 'maximum'},
+                       {'routing_mode': 'message'},
                        {'maximum_effort': 'ultra'}, {'allow_effort': []},
                        {'allow_effort': ['high', 'high']}, {'allow_effort': ['unknown']}):
             with self.assertRaises(ValueError):
                 validate(values)
+
+    def test_route_pin_can_be_reset_for_current_thread_ids(self):
+        save_route_pin(state_dir(), 'thr_123-test', 'gpt-5.6-sol', 'high', 'manual')
+        self.assertEqual(load_route_pin(state_dir(), 'thr_123-test')['source'], 'manual')
+        enable_auto('thr_123-test')
+        self.assertIsNone(load_route_pin(state_dir(), 'thr_123-test'))
+        self.assertTrue(auto_route_requested(state_dir(), 'thr_123-test'))
+        with self.assertRaises(ValueError):
+            enable_auto('../thread')
 
 
 if __name__ == '__main__':

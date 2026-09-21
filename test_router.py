@@ -48,6 +48,8 @@ class RouterTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             read_budget(server, 'balanced', 10, 'codex', required=True)
         answer = {'answers': {
+            'request_kind': {'type': 'choice', 'choice': 'task', 'confidence': 1,
+                             'probabilities': {'conversation': 0, 'task': 1}},
             'task_class': {'type': 'choice', 'choice': 'routine', 'confidence': 1,
                            'probabilities': {'routine': 1, 'standard': 0, 'demanding': 0}},
             'route': {'type': 'choice', 'choice': 'test-model/low',
@@ -69,6 +71,8 @@ class RouterTests(unittest.TestCase):
         ]
         probabilities = {'luna/high': .6, 'sol/high': .3, 'astra/high': .1}
         answer = {'answers': {
+            'request_kind': {'type': 'choice', 'choice': 'task', 'confidence': 1,
+                             'probabilities': {'conversation': 0, 'task': 1}},
             'task_class': {'type': 'choice', 'choice': 'demanding', 'confidence': 1,
                            'probabilities': {'routine': 0, 'standard': 0, 'demanding': 1}},
             'route': {'type': 'choice', 'choice': 'luna/high', 'confidence': .6,
@@ -82,10 +86,13 @@ class RouterTests(unittest.TestCase):
 
         answer['answers']['task_class']['choice'] = 'routine'
         answer['answers']['task_class']['probabilities'] = {'routine': 1, 'standard': 0, 'demanding': 0}
+        answer['answers']['request_kind']['choice'] = 'conversation'
+        answer['answers']['request_kind']['probabilities'] = {'conversation': 1, 'task': 0}
         with patch('router.ask', return_value=answer):
             highest = choose('key', routes_for(models), 'hello', {}, 'jev',
                              routing_preference='highest_quality')
         self.assertEqual(highest['model'], 'astra')
+        self.assertEqual(highest['request_kind'], 'conversation')
 
     def test_maximum_effort_caps_the_selected_model(self):
         model = {'model': 'astra', 'description': 'Our most capable model for complex, demanding work.',
@@ -95,6 +102,8 @@ class RouterTests(unittest.TestCase):
         probabilities = {f'astra/{effort}': value for effort, value in
                          zip(('low', 'medium', 'high', 'xhigh', 'max', 'ultra'), (.05, .05, .1, .2, .2, .4))}
         answer = {'answers': {
+            'request_kind': {'type': 'choice', 'choice': 'task', 'confidence': 1,
+                             'probabilities': {'conversation': 0, 'task': 1}},
             'task_class': {'type': 'choice', 'choice': 'demanding', 'confidence': 1,
                            'probabilities': {'routine': 0, 'standard': 0, 'demanding': 1}},
             'route': {'type': 'choice', 'choice': 'astra/ultra', 'confidence': .4,

@@ -7,13 +7,11 @@ from pathlib import Path
 
 from install import installed_codex, prompt_key, uninstall
 from jev_client import JevError, load_key
-from settings import default_env_file
+from settings import default_env_file, request_auto_route, state_dir
 
 
 def enable_auto(thread_id):
-    if len(thread_id) != 36 or any(c not in '0123456789abcdef-' for c in thread_id):
-        raise ValueError('Provide a Codex thread ID.')
-    (Path.home() / '.local/state/jev-codex' / f'{thread_id}.pin').unlink(missing_ok=True)
+    request_auto_route(state_dir(), thread_id)
 
 
 def key_action():
@@ -54,7 +52,7 @@ def run(args):
             relay = subprocess.Popen([
                 sys.executable, str(Path(__file__).with_name('native_proxy.py')),
                 '--codex', codex, '--socket', str(socket),
-                '--state-dir', str(Path.home() / '.local/state/jev-codex')],
+                '--state-dir', str(state_dir())],
                 stdin=subprocess.DEVNULL, stdout=output, stderr=output, start_new_session=True)
             try:
                 for _ in range(100):

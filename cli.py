@@ -8,7 +8,7 @@ from pathlib import Path
 
 from install import installed_codex, prompt_key, uninstall, verify
 from jev_client import load_key
-from settings import config_path, default_env_file, load_settings, private_write, set_setting
+from settings import VERSION, config_path, default_env_file, load_settings, private_write, set_setting
 
 NATIVE_COMMANDS = {'exec', 'e', 'review', 'login', 'logout', 'mcp', 'mcp-server',
                    'app-server', 'completion', 'sandbox', 'debug', 'apply', 'a',
@@ -51,7 +51,7 @@ def main():
             binary = installed_codex()
             os.execv(binary, [binary, *args[1:]])
         if args[:1] == ['config']:
-            parser = argparse.ArgumentParser(prog='jev-codex config', description='Change saved settings; open sessions reload them before the next turn.')
+            parser = argparse.ArgumentParser(prog='jev-codex config', description='Change saved settings. Open sessions reload them before the next turn. In thread mode, route-choice settings affect the next selection.')
             parser.add_argument('--file', type=Path, default=config_path(), help='Settings file to read or change')
             sub = parser.add_subparsers(dest='action', required=True)
             sub.add_parser('show')
@@ -70,7 +70,7 @@ def main():
                 except ValueError:
                     value = options.value
                 set_setting(options.name.replace('-', '_'), value, options.file)
-                print('Saved. Applies before the next turn unless a command-line option overrides it.')
+                print('Saved. Open sessions reload settings before the next turn. In thread mode, route-choice settings affect the next selection.')
             return 0
         if args[:1] == ['doctor']:
             parser = argparse.ArgumentParser(prog='jev-codex doctor')
@@ -129,7 +129,7 @@ def main():
         if args[:1] == ['route']:
             args = args[1:]
         if args == ['--version']:
-            print('jev-codex 0.3.0')
+            print(f'jev-codex {VERSION}')
             return 0
         from router import main as route
         sys.argv[1:] = args
