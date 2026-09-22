@@ -119,14 +119,29 @@ def model_capability(route):
     return 1
 
 
-def enforce_capability(selected, probabilities, routes, task_class, routing_preference):
+def capability_floor(task_class, routing_preference):
     if routing_preference == 'highest_quality':
-        floor = 3
-        minimum_effort = {'routine': 'low', 'standard': 'medium', 'demanding': 'high'}[task_class]
-    elif task_class == 'demanding':
-        floor = 3 if routing_preference == 'higher_quality' else 2
-        minimum_effort = 'high'
-    else:
+        return 3
+    if task_class == 'demanding':
+        return 3 if routing_preference == 'higher_quality' else 2
+    return 0
+
+
+def effort_floor(task_class, routing_preference):
+    if task_class == 'demanding':
+        return 'high'
+    if routing_preference == 'highest_quality' and task_class == 'standard':
+        return 'medium'
+    return 'low'
+
+
+def enforce_capability(selected, probabilities, routes, task_class, routing_preference):
+    floor = capability_floor(task_class, routing_preference)
+    minimum_effort = effort_floor(task_class, routing_preference)
+    if not floor and minimum_effort == 'low':
+        return selected
+    if (model_capability(routes[selected]) >= floor and
+            EFFORT_RANK.get(routes[selected]['effort'], -1) >= EFFORT_RANK[minimum_effort]):
         return selected
     eligible = [name for name, route in routes.items()
                 if model_capability(route) >= floor and
@@ -137,13 +152,32 @@ def enforce_capability(selected, probabilities, routes, task_class, routing_pref
 def enforce_maximum_effort(selected, probabilities, routes, task_class, routing_preference, maximum_effort):
     if maximum_effort == 'automatic' or EFFORT_RANK[routes[selected]['effort']] <= EFFORT_RANK[maximum_effort]:
         return selected
-    minimum = 'high' if task_class == 'demanding' else \
-              'medium' if routing_preference == 'highest_quality' and task_class == 'standard' else 'low'
+    minimum = effort_floor(task_class, routing_preference)
     model = routes[selected]['model']
     eligible = [name for name, route in routes.items()
                 if route['model'] == model and
                 EFFORT_RANK[minimum] <= EFFORT_RANK.get(route['effort'], -1) <= EFFORT_RANK[maximum_effort]]
     return max(eligible, key=probabilities.get) if eligible else selected
+
+
+def enforce_usage(selected, probabilities, routes, task_class, routing_preference, maximum_effort, budget):
+    if (not budget or 'unavailable' in budget or budget.get('mode') == 'quality' or
+            budget.get('pressure', 0) < 0.65):
+        return selected
+    floor = capability_floor(task_class, routing_preference)
+    minimum_effort = EFFORT_RANK[effort_floor(task_class, routing_preference)]
+    maximum = EFFORT_RANK.get(maximum_effort, max(EFFORT_RANK.values())) \
+        if maximum_effort != 'automatic' else max(EFFORT_RANK.values())
+    eligible = [name for name, route in routes.items()
+                if model_capability(route) >= floor and
+                minimum_effort <= EFFORT_RANK.get(route['effort'], -1) <= maximum]
+    if not eligible:
+        return selected
+    capability = min(model_capability(routes[name]) for name in eligible)
+    eligible = [name for name in eligible if model_capability(routes[name]) == capability]
+    effort = min(EFFORT_RANK[routes[name]['effort']] for name in eligible)
+    eligible = [name for name in eligible if EFFORT_RANK[routes[name]['effort']] == effort]
+    return max(eligible, key=probabilities.get)
 
 
 def choose(key, routes, prompt, context, jev_model, budget=None, routing_preference='balanced',
@@ -153,6 +187,8 @@ def choose(key, routes, prompt, context, jev_model, budget=None, routing_prefere
     context['routing_preference'] = {
         'level': routing_preference, 'policy': ROUTING_PREFERENCE[routing_preference]}
     context['maximum_effort'] = maximum_effort
+    if budget is not None and 'unavailable' not in budget and budget.get('mode') != 'quality':
+        context['usage_policy'] = budget
     result = ask(key, {'request': prompt, **context}, {'request_kind': {
         'type': 'choice',
         'instructions': 'Decide whether the latest request asks for an answer or action.',
@@ -179,6 +215,8 @@ def choose(key, routes, prompt, context, jev_model, budget=None, routing_prefere
             'Use only the supplied capability descriptions; do not invent benchmark results or prices. '
             'First meet the minimum task capability. Then apply the routing preference. It is a tie-breaker '
             'and must never lower the model or effort below what reliable completion requires. '
+            'If usage_policy is present, prefer less intensive models and efforts as pressure rises. '
+            'High pressure means select the least intensive route that still meets the capability floor. '
             'Do not select reasoning effort above maximum_effort unless it is automatic. '
             'Do not confuse low remaining usage with low task difficulty. A failed check is evidence '
             'to reconsider the previous route, not proof that a stronger model is required. '
@@ -193,12 +231,16 @@ def choose(key, routes, prompt, context, jev_model, budget=None, routing_prefere
     selected = enforce_capability(proposed, answer['probabilities'], routes, task_class, routing_preference)
     selected = enforce_maximum_effort(
         selected, answer['probabilities'], routes, task_class, routing_preference, maximum_effort)
+    before_usage = selected
+    selected = enforce_usage(selected, answer['probabilities'], routes, task_class,
+                             routing_preference, maximum_effort, budget)
     return {**routes[selected], 'route': selected, 'proposed_route': proposed,
             'confidence': answer['confidence'] if selected == proposed else answer['probabilities'][selected],
             'probabilities': answer['probabilities'], 'jev_model': result.get('model'),
             'jev_usage': result.get('usage'), 'task_class': task_class,
             'request_kind': request_kind,
             'policy_adjusted': selected != proposed, 'routing_preference': routing_preference,
+            'usage_adjusted': selected != before_usage,
             'maximum_effort': maximum_effort,
             'routing_seconds': time.monotonic() - started}
 

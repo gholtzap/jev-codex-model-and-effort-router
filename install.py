@@ -243,7 +243,7 @@ def install(codex, key, wrap=None, change_shell=True):
                 current.unlink(missing_ok=True)
             raise
     print(f'Installed: {bindir / "jev-codex"}')
-    print('Defaults: route once per thread, balanced routing, automatic maximum effort, 10% reserve, usage display on.' +
+    print('Defaults: route once per thread, balanced routing, automatic maximum effort, usage-based routing on, 10% reserve, usage display on.' +
           (' Existing settings were kept.' if settings_kept else ''))
     if wrap:
         print('The codex command keeps the standard terminal UI and routes user turns through Jev.')

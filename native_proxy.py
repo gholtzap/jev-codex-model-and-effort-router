@@ -146,6 +146,7 @@ async def select(backend, params, state_dir, settings=None):
           'request_kind': route.get('request_kind'), 'routing_mode': settings['routing_mode'],
           'maximum_effort': settings['maximum_effort'],
           'policy_adjusted': route.get('policy_adjusted', False),
+          'usage_adjusted': route.get('usage_adjusted', False),
           'quota_pressure': budget['pressure_level'] if budget else 'unknown'})
     return route
 

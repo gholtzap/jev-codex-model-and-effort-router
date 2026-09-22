@@ -55,9 +55,10 @@ class RouterTests(unittest.TestCase):
             'route': {'type': 'choice', 'choice': 'test-model/low',
                       'confidence': 1, 'probabilities': {'test-model/low': 1}}}}
         for mode in ('quality', 'balanced'):
+            budget = {'mode': mode, 'pressure': .8}
             with patch('router.ask', return_value=answer) as request:
-                choose('key', routes_for([MODEL]), 'task', {}, 'jev', {'mode': mode})
-                self.assertNotIn('usage_policy', request.call_args.args[1])
+                choose('key', routes_for([MODEL]), 'task', {}, 'jev', budget)
+                self.assertEqual('usage_policy' in request.call_args.args[1], mode == 'balanced')
                 self.assertEqual(request.call_args.args[1]['routing_preference']['level'], 'balanced')
 
     def test_demanding_work_enforces_model_and_effort_floor(self):
@@ -83,6 +84,20 @@ class RouterTests(unittest.TestCase):
         self.assertEqual((balanced['model'], balanced['effort']), ('sol', 'high'))
         self.assertEqual((quality['model'], quality['effort']), ('astra', 'high'))
         self.assertTrue(balanced['policy_adjusted'])
+
+        answer['answers']['route']['choice'] = 'astra/high'
+        answer['answers']['route']['confidence'] = .1
+        seven_percent_left = usage_budget({'rateLimitsByLimitId': {'codex': {'primary': {
+            'usedPercent': 93, 'windowDurationMins': 10080, 'resetsAt': 86400 * 5}}}},
+            'balanced', 10, now=0)
+        with patch('router.ask', return_value=answer):
+            usage_aware = choose('key', routes_for(models), 'audit and repair', {}, 'jev',
+                                 seven_percent_left, routing_preference='balanced')
+            usage_off = choose('key', routes_for(models), 'audit and repair', {}, 'jev',
+                               {'mode': 'quality', 'pressure': 0}, routing_preference='balanced')
+        self.assertEqual((usage_aware['model'], usage_aware['effort']), ('sol', 'high'))
+        self.assertTrue(usage_aware['usage_adjusted'])
+        self.assertEqual((usage_off['model'], usage_off['effort']), ('astra', 'high'))
 
         answer['answers']['task_class']['choice'] = 'routine'
         answer['answers']['task_class']['probabilities'] = {'routine': 1, 'standard': 0, 'demanding': 0}
