@@ -7,7 +7,7 @@ import re
 import tempfile
 from pathlib import Path
 
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 DEFAULTS = {'routing_preference': 'balanced', 'maximum_effort': 'automatic',
             'routing_mode': 'thread',
             'usage_policy': 'balanced', 'reserve_percent': 10, 'show_usage': True,

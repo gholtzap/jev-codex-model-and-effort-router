@@ -51,7 +51,7 @@ class InstallTests(unittest.TestCase):
         rc.write_text('# existing shell settings\n')
         with patch('sys.stdout', new_callable=io.StringIO):
             install.install(str(self.binary), 'test-key')
-        self.assertEqual(self.run_cli('--version').stdout.strip(), 'jev-codex 0.4.0')
+        self.assertEqual(self.run_cli('--version').stdout.strip(), 'jev-codex 0.4.1')
         self.assertEqual(self.run_cli('doctor', '--offline').returncode, 0)
         if sys.platform == 'darwin':
             self.assertTrue((data_dir() / 'current/Jev Codex Settings.app/Contents/MacOS/JevCodexSettings').is_file())
