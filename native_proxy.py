@@ -27,7 +27,8 @@ class Backend:
         self.connection = None
 
     async def __aenter__(self):
-        self.connection = await unix_connect(str(self.socket), max_size=None, compression=None)
+        self.connection = await unix_connect(str(self.socket), max_size=None, compression=None,
+                                             ping_interval=None)
         await self.call('initialize', {'clientInfo': {
             'name': 'jev_codex_route', 'title': 'Jev Codex route', 'version': VERSION},
             'capabilities': {'experimentalApi': True}})
@@ -42,7 +43,7 @@ class Backend:
         request_id = f'jev-{self.next_id}'
         await self.connection.send(json.dumps({'id': request_id, 'method': method, 'params': params}))
         while True:
-            message = json.loads(await self.connection.recv())
+            message = json.loads(await asyncio.wait_for(self.connection.recv(), 30))
             if message.get('id') != request_id:
                 continue
             if 'error' in message:
@@ -152,7 +153,8 @@ async def select(backend, params, state_dir, settings=None):
 
 
 async def relay(client, backend_socket, state_dir):
-    async with unix_connect(str(backend_socket), max_size=None, compression=None) as upstream, Backend(backend_socket) as side:
+    async with unix_connect(str(backend_socket), max_size=None, compression=None,
+                            ping_interval=None) as upstream, Backend(backend_socket) as side:
         pending_routes = {}
 
         async def to_backend():
@@ -276,7 +278,7 @@ async def serve(codex, socket, state_dir):
         else:
             raise TimeoutError('Codex app server did not start.')
         async with unix_serve(lambda client: relay(client, backend_socket, state_dir),
-                              str(socket), max_size=None, compression=None):
+                              str(socket), max_size=None, compression=None, ping_interval=None):
             os.chmod(socket, 0o600)
             stopped = asyncio.create_task(stop.wait())
             exited = asyncio.create_task(process.wait())
