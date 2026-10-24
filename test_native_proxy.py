@@ -13,6 +13,11 @@ from settings import DEFAULTS, load_route_pin, request_auto_route, save_route_pi
 
 
 class NativeProxyTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        memory = patch('native.check_host_memory', return_value=0)
+        memory.start()
+        self.addCleanup(memory.stop)
+
     def settings(self, mode='thread'):
         return {**DEFAULTS, 'routing_mode': mode}
 

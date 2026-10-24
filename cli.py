@@ -48,8 +48,17 @@ def main():
                 from native import run
                 return run(args)
         if args[:1] == ['--original']:
+            if first_argument(args[1:]) in {'exec', 'e', 'review', 'app-server', 'mcp-server'} and not any(
+                    option in args for option in ('--help', '-h', '--version', '-V')):
+                from native import check_host_memory
+                status = check_host_memory()
+                if status:
+                    return status
             binary = installed_codex()
             os.execv(binary, [binary, *args[1:]])
+        if args[:1] == ['cleanup']:
+            from proxy_cleanup import main as cleanup
+            return cleanup(args[1:])
         if args[:1] == ['config']:
             parser = argparse.ArgumentParser(prog='jev-codex config', description='Change saved settings. Open sessions reload them before the next turn. In thread mode, route-choice settings affect the next selection.')
             parser.add_argument('--file', type=Path, default=config_path(), help='Settings file to read or change')
@@ -132,6 +141,10 @@ def main():
             print(f'jev-codex {VERSION}')
             return 0
         from router import main as route
+        from native import check_host_memory
+        status = check_host_memory()
+        if status:
+            return status
         sys.argv[1:] = args
         return route()
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
