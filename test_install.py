@@ -21,9 +21,6 @@ from settings import (auto_route_requested, config_path, data_dir, load_route_pi
 
 class InstallTests(unittest.TestCase):
     def setUp(self):
-        memory = patch('native.check_host_memory', return_value=0)
-        memory.start()
-        self.addCleanup(memory.stop)
         self.temp = tempfile.TemporaryDirectory(prefix='jev install ')
         self.home = Path(self.temp.name)
         self.env = patch.dict(os.environ, {'HOME': str(self.home), 'SHELL': '/bin/zsh',

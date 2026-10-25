@@ -162,12 +162,6 @@ async def relay(client, backend_socket, state_dir):
             async for raw in client:
                 message = json.loads(raw)
                 params = message.get('params', {})
-                if message.get('method') == 'turn/start':
-                    from native import check_host_memory
-                    if await asyncio.to_thread(check_host_memory, interactive=True):
-                        await client.send(json.dumps({'id': message['id'], 'error': {
-                            'code': -32000, 'message': 'Host memory is low. Save or close unused work, then retry.'}}))
-                        continue
                 if message.get('method') == 'thread/settings/update':
                     settings = load_settings()
                     if settings['routing_mode'] == 'thread' and request_route(params):
