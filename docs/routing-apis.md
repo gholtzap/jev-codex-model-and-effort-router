@@ -26,6 +26,37 @@ questions still go to the API.
 
 Reference: [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions).
 
+## OpenRouter Decisions
+
+Select **OpenRouter Decisions** in the Routing API menu, or run:
+
+```sh
+jev-codex config set routing_provider openrouter
+jev-codex config set routing_model cloudflare/clef-flash
+jev-codex auth login
+```
+
+This calls `https://openrouter.ai/api/alpha/decisions` with native decision
+questions. It uses `OPENROUTER_API_KEY`, separate from Codex sign-in and other
+provider keys. If no routing model is set, it uses `typesafe/jev-1.14`.
+
+You can enter any decision-model ID supported by OpenRouter. The router has no
+fixed list of model IDs. Find current models in the
+[OpenRouter decision catalog](https://openrouter.ai/models?output_modalities=decisions),
+or use the public catalog API:
+
+```sh
+curl 'https://openrouter.ai/api/v1/models?output_modalities=decisions'
+```
+
+The adapter uses the native choice, confidence, and probability fields. Missing
+answers, unsupported routes, and invalid probabilities stop the request. The
+router does not change to another routing model after an API error. OpenRouter
+can select an available provider for the model you request under its own service
+rules.
+
+Reference: [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request).
+
 The separate **Chat Completions-compatible** option uses Chat Completions with a strict JSON Schema
 response format. Select any model that supports this format at your endpoint.
 The router does not maintain a fixed list of routing models. The selected route
@@ -34,7 +65,7 @@ must still be in the live Codex model and effort pool.
 ## Settings
 
 Use `jev-codex settings` on macOS. Select **Routing API**, then set **Routing
-model**. Both OpenAI API options also show **Routing endpoint** and
+model**. The OpenAI and OpenRouter options also show **Routing endpoint** and
 **API key variable**. Enter a variable name in the last field, not a secret key.
 
 You can also use the CLI:
@@ -77,11 +108,13 @@ To return to Jev:
 jev-codex config set routing_provider jev
 ```
 
-Changing providers clears the routing-model override and key-variable override.
-It keeps the endpoint setting. Check the endpoint when you change API formats.
+Changing providers clears the routing-model override and key-variable override,
+and resets the endpoint to the new provider default. This also applies to a
+`--routing-provider` override; explicit endpoint, model, and key-variable overrides
+still take precedence.
 Jev then uses the existing `jev_model` setting, which defaults to `jev-latest`,
 and `JEV_API_KEY`. Existing configurations continue to work. `routing_model`
-can override the model for either API. CLI routing commands also support
+can override the model for any routing API. CLI routing commands also support
 `--routing-provider`, `--routing-model`, `--routing-base-url`, and
 `--routing-api-key-env`.
 
@@ -96,3 +129,6 @@ route stays pinned. Use `jev-codex auto on THREAD_ID` to request a new selection
 or select every-turn routing.
 
 API format reference: [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Start a new Codex session to use a provider added by an installed update.
+Existing sessions keep the router code they started with.

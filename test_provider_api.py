@@ -24,7 +24,7 @@ from test_router import MODEL
 
 
 @contextmanager
-def endpoint(transform=None):
+def endpoint(transform=None, base_path='/v1'):
     receipts=[]
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
@@ -35,6 +35,8 @@ def endpoint(transform=None):
                 if any(not 2 <= len(q['choices']) <= 255 for q in body['questions']):
                     self.send_response(400);self.end_headers();return
                 questions={q['name']:[c['value'] for c in q['choices']] for q in body['questions']}
+            elif self.path == '/api/alpha/decisions':
+                questions={name:list(q['criteria']) for name,q in body['questions'].items()}
             else:
                 schema=body['response_format']['json_schema']['schema']['properties']['answers']['properties']
                 questions={name:value['properties']['choice']['enum'] for name,value in schema.items()}
@@ -48,6 +50,8 @@ def endpoint(transform=None):
                         'answers':[{**a,'name':name,'probabilities':[
                             {'value':v,'probability':p} for v,p in a['probabilities'].items()]}
                             for name,a in reversed(list(answers.items()))]}
+            elif self.path == '/api/alpha/decisions':
+                result={'model':body['model'],'answers':answers,'usage':{'input_tokens':10,'total_tokens':10}}
             else:
                 result={'model':body['model'],'usage':{'total_tokens':10},'choices':[{
                     'finish_reason':'stop','message':{'content':json.dumps({'answers':answers})}}]}
@@ -57,7 +61,7 @@ def endpoint(transform=None):
             self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-    try:yield f'http://127.0.0.1:{server.server_port}/v1',receipts
+    try:yield f'http://127.0.0.1:{server.server_port}{base_path}',receipts
     finally:server.shutdown();server.server_close();thread.join()
 
 
@@ -76,6 +80,73 @@ class ProviderApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(r['path']=='/v1/chat/completions' for r in receipts))
             self.assertTrue(all(r['authorization']=='Bearer fixture-key' for r in receipts))
             self.assertTrue(all(r['body']['response_format']['json_schema']['strict'] for r in receipts))
+
+    def test_openrouter_uses_native_decisions_for_different_model_providers(self):
+        with endpoint(base_path='/api/alpha') as (url,receipts):
+            for model in ['cloudflare/clef-flash','liquid/d1-ultra','typesafe/jev-1.14']:
+                api=settings.validate({'routing_provider':'openrouter','routing_model':model,
+                                       'routing_base_url':url,'routing_api_key_env':'TEST_ROUTER_KEY'})
+                result=choose('fixture-key',routes_for([MODEL]),'Do a narrow edit',{},'jev-latest',
+                              None,'balanced','automatic',api)
+                self.assertEqual(result['routing_provider'],'openrouter')
+                self.assertEqual(result['routing_model'],model)
+                self.assertEqual(result['model'],MODEL['model'])
+            self.assertEqual(len(receipts),3)
+            self.assertTrue(all(r['path']=='/api/alpha/decisions' for r in receipts))
+            self.assertTrue(all(r['authorization']=='Bearer fixture-key' for r in receipts))
+            self.assertTrue(all(set(r['body'])=={'model','state','questions'} for r in receipts))
+            self.assertEqual(receipts[0]['body']['state']['request'],'Do a narrow edit')
+            with patch('install.load_settings',return_value=api):install.verify_jev('fixture-key')
+
+    def test_openrouter_provider_changes_reset_endpoint_model_and_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'config.json'
+            settings.private_write(path,settings.validate({'routing_provider':'openai',
+                'routing_model':'old-model','routing_api_key_env':'OLD_KEY',
+                'routing_base_url':'https://custom.example/v1'}))
+            override=settings.load_settings(path,{'routing_provider':'openrouter'})
+            self.assertEqual(override['routing_base_url'],'https://openrouter.ai/api/alpha')
+            self.assertIsNone(override['routing_model'])
+            self.assertIsNone(override['routing_api_key_env'])
+            settings.set_setting('routing_provider','openrouter',path)
+            api=settings.load_settings(path)
+            self.assertEqual(settings.routing_api(api),{'provider':'openrouter',
+                'model':'typesafe/jev-1.14','base_url':'https://openrouter.ai/api/alpha'})
+            self.assertEqual(settings.routing_key_env(api),'OPENROUTER_API_KEY')
+            self.assertEqual(settings.validate({'routing_provider':'openrouter'})['routing_base_url'],
+                             'https://openrouter.ai/api/alpha')
+            with self.assertRaises(ValueError):settings.routing_key_env(settings.validate({
+                'routing_provider':'openrouter','routing_base_url':'https://custom.example/api'}))
+            explicit=settings.load_settings(path,{'routing_provider':'openai_decisions',
+                'routing_model':'new-model','routing_base_url':'https://custom.example/v1',
+                'routing_api_key_env':'CUSTOM_KEY'})
+            self.assertEqual(explicit['routing_model'],'new-model')
+            self.assertEqual(explicit['routing_base_url'],'https://custom.example/v1')
+            self.assertEqual(settings.routing_key_env(explicit),'CUSTOM_KEY')
+            settings.set_setting('routing_provider','openai_decisions',path)
+            self.assertEqual(settings.load_settings(path)['routing_base_url'],'https://api.openai.com/v1')
+            self.assertEqual(settings.routing_key_env(settings.load_settings(path)),'OPENAI_API_KEY')
+
+    def test_openrouter_rejects_bad_answers_redirects_and_errors(self):
+        # Failures: refusal, missing/extra answer, unknown route, incomplete or invalid
+        # probabilities, HTTP error, redirect, key exposure, and fallback to another API.
+        def refusal(r,_):r['answers']['route']={'type':'refusal'};return 200,{},r
+        def missing(r,_):r['answers']={};return 200,{},r
+        def extra(r,_):r['answers']['extra']={};return 200,{},r
+        def unknown(r,_):r['answers']['route']['choice']='unknown';return 200,{},r
+        def probabilities(r,_):r['answers']['route']['probabilities']={};return 200,{},r
+        def nan(r,_):r['answers']['route']['confidence']=float('nan');return 200,{},r
+        def redirect(r,_):return 302,{'Location':'/stolen'},r
+        def unauthorized(r,_):return 401,{}, {'error':'Do not print fixture-key'}
+        questions={'route':{'type':'choice','instructions':'Select','criteria':{'one':'One'}}}
+        for response in [refusal,missing,extra,unknown,probabilities,nan,redirect,unauthorized]:
+            with self.subTest(response=response.__name__),endpoint(response,'/api/alpha') as (url,receipts), \
+                    patch('jev_client.urlopen',side_effect=AssertionError('Unexpected Jev request')):
+                with self.assertRaises(jev_client.JevError) as error:
+                    jev_client.ask('fixture-key',{},questions,'cloudflare/clef-flash',
+                                   provider='openrouter',base_url=url)
+                self.assertNotIn('fixture-key',str(error.exception))
+                self.assertEqual(len(receipts),1)
 
     def test_decisions_uses_native_questions_and_probabilities(self):
         with endpoint() as (url,receipts):
@@ -195,11 +266,15 @@ class ProviderApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(saved['routing_model'])
             self.assertIsNone(saved['routing_api_key_env'])
 
+    async def test_openrouter_routes_a_real_relay_request(self):
+        await self.test_configured_api_routes_a_real_relay_request('openrouter')
+
     async def test_decisions_routes_a_real_relay_request(self):
         await self.test_configured_api_routes_a_real_relay_request('openai_decisions')
 
     async def test_configured_api_routes_a_real_relay_request(self, provider='openai'):
-        with tempfile.TemporaryDirectory(prefix='rp-') as directory,endpoint() as (url,receipts):
+        with tempfile.TemporaryDirectory(prefix='rp-') as directory,endpoint(
+                base_path='/api/alpha' if provider=='openrouter' else '/v1') as (url,receipts):
             root=Path(directory)
             env={'XDG_CONFIG_HOME':str(root/'config'),'TEST_ROUTER_KEY':'relay-fixture-key'}
             with patch.dict(os.environ,env):
