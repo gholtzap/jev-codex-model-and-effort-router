@@ -8,6 +8,7 @@ from pathlib import Path
 
 from install import installed_codex, prompt_key, uninstall, verify
 from jev_client import load_key
+from settings import routing_key_env
 from settings import VERSION, config_path, default_env_file, load_settings, private_write, set_setting
 
 NATIVE_COMMANDS = {'exec', 'e', 'review', 'login', 'logout', 'mcp', 'mcp-server',
@@ -81,18 +82,18 @@ def main():
             options = parser.parse_args(args[1:])
             load_settings()
             binary = installed_codex()
-            key = load_key(default_env_file())
-            print(f'Original Codex: {binary}\nSettings: {config_path()}\nTypeSafe key: configured')
+            key = load_key(default_env_file(), key_env=routing_key_env(load_settings()))
+            print(f'Original Codex: {binary}\nSettings: {config_path()}\nRouting API key: configured')
             if not options.offline:
                 verify(binary, key)
             return 0
         if args == ['auth', 'login']:
             prompt_key(force=True)
-            print('TypeSafe API key saved.')
+            print('Routing API authentication is configured.')
             return 0
         if args[:1] == ['uninstall']:
             parser = argparse.ArgumentParser(prog='jev-codex uninstall')
-            parser.add_argument('--purge', action='store_true', help='Also remove saved settings and the TypeSafe key')
+            parser.add_argument('--purge', action='store_true', help='Also remove saved settings and routing API keys')
             uninstall(parser.parse_args(args[1:]).purge)
             return 0
         if args[:1] == ['settings']:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from install import installed_codex, prompt_key, uninstall
 from jev_client import JevError, load_key
-from settings import default_env_file, request_auto_route, state_dir
+from settings import default_env_file, request_auto_route, state_dir, load_settings, routing_key_env
 
 
 def enable_auto(thread_id):
@@ -18,12 +18,12 @@ def enable_auto(thread_id):
 
 def key_action():
     try:
-        load_key(default_env_file())
+        load_key(default_env_file(), key_env=routing_key_env(load_settings()))
         return 'route'
     except (FileNotFoundError, JevError):
         pass
     while True:
-        choice = input('Jev needs a TypeSafe API key. Add one [a], continue without Jev [Enter], or uninstall Jev [u]: ').strip().lower()
+        choice = input('The selected routing API needs a key. Add one [a], continue without Jev [Enter], or uninstall Jev [u]: ').strip().lower()
         if not choice:
             return 'original'
         if choice == 'u':

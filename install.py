@@ -13,7 +13,8 @@ import tempfile
 from pathlib import Path
 
 from appserver import AppServer
-from jev_client import JevError, ask, load_key, validate_choice
+from jev_client import JevError, ask, load_key, validate_choice, credential_text, save_key
+from settings import routing_api, routing_key_env
 from settings import atomic_write, config_path, data_dir, load_settings, private_write
 from usage import read_budget, show_budget
 
@@ -90,33 +91,38 @@ def verify(codex, key, check_jev=True):
 
 
 def verify_jev(key):
+    options = routing_api(load_settings())
     result = ask(key, 'Installation check.', {'check': {'type': 'choice',
-                 'instructions': 'Select ready.', 'criteria': {'ready': 'The connection is ready.'}}})
+                 'instructions': 'Select ready.', 'criteria': {'ready': 'The connection is ready.'}}}, **options)
     validate_choice(result['answers'].get('check'), {'ready'})
-    print('TypeSafe connection passed.')
+    print('Routing API connection passed.')
 
 
 def prompt_key(force=False, required=True, save=True):
     credential = config_path().with_name('credentials.env')
+    key_env = routing_key_env(load_settings())
+    if not key_env:
+        return ''
     if not force:
         try:
-            return load_key(credential)
+            return load_key(credential, key_env=key_env)
         except (FileNotFoundError, JevError):
             pass
     if not sys.stdin.isatty():
         if required:
-            raise RuntimeError('Run jev-codex auth login in a terminal to add your TypeSafe API key.')
+            raise RuntimeError(f'Run jev-codex auth login in a terminal to add {key_env}.')
         return None
-    print(f'Create or copy your TypeSafe API key at {TYPESAFE_CONSOLE}')
+    if load_settings()['routing_provider'] == 'jev':
+        print(f'Create or copy your TypeSafe API key at {TYPESAFE_CONSOLE}')
     suffix = '' if required else '; press Enter to set it up later'
-    key = getpass.getpass(f'TypeSafe API key (input hidden{suffix}): ').strip()
+    key = getpass.getpass(f'{key_env} (input hidden{suffix}): ').strip()
     if not key:
         if required:
-            raise RuntimeError('A TypeSafe API key is required.')
+            raise RuntimeError(f'{key_env} is required.')
         return None
     verify_jev(key)
     if save:
-        atomic_write(credential, 'JEV_API_KEY=' + shlex.quote(key) + '\n')
+        save_key(credential, key, key_env)
     return key
 
 
@@ -207,8 +213,9 @@ def install(codex, key, wrap=None, change_shell=True):
         if not settings_kept:
             writes[str(settings_file)] = json.dumps(load_settings(), indent=2) + '\n'
         credential = settings_file.with_name('credentials.env')
-        if key is not None:
-            writes[str(credential)] = 'JEV_API_KEY=' + shlex.quote(key) + '\n'
+        key_env = routing_key_env(load_settings())
+        if key is not None and key_env:
+            writes[str(credential)] = credential_text(credential, key, key_env)
         record = {'codex_path': codex, 'wrap_codex': wrap, 'release': version,
                   'commands': {p: digest(t) for p, t in launchers.items()}, 'shell': shell_records}
         writes[str(manifest_path)] = json.dumps(record, indent=2) + '\n'
@@ -247,8 +254,10 @@ def install(codex, key, wrap=None, change_shell=True):
           (' Existing settings were kept.' if settings_kept else ''))
     if wrap:
         print('The codex command keeps the standard terminal UI and routes user turns through Jev.')
-    if key is None:
-        print('Your TypeSafe API key will be requested when you first run codex.')
+    if key is None and credential.exists():
+        print('Saved routing API keys were kept.')
+    elif key is None and key_env:
+        print('Your routing API key will be requested when you first run codex.')
     if sys.platform == 'darwin':
         print('Run jev-codex settings to open the menu-bar settings app.')
     command = 'codex' if wrap else 'jev-codex'
@@ -289,7 +298,7 @@ def uninstall(purge=False):
         shutil.rmtree(root)
     settings_file = config_path()
     kept = [name for name, path in (
-        ('settings', settings_file), ('TypeSafe key', settings_file.with_name('credentials.env')))
+        ('settings', settings_file), ('API keys', settings_file.with_name('credentials.env')))
         if path.exists()]
     if purge:
         for name in ('config.json', 'config.lock', 'credentials.env', 'catalog.json'):
@@ -317,7 +326,7 @@ def main():
     try:
         codex = find_codex(args.codex_path) if args.codex_path else installed_codex()
         if args.env_file:
-            key = load_key(args.env_file, use_environment=False)
+            key = load_key(args.env_file, use_environment=False, key_env=routing_key_env(load_settings()))
         else:
             key = prompt_key(required=False, save=False)
         verify(codex, key, check_jev=key is not None)

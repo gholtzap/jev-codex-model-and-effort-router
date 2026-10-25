@@ -16,6 +16,7 @@ from websockets.exceptions import ConnectionClosed
 
 from jev_client import load_key
 from router import audit, choose, context_for, routes_for
+from settings import routing_key_env
 from settings import (auto_route_requested, default_env_file, load_route_pin, load_settings,
                       request_auto_route, save_route_pin, thread_state_path, VERSION)
 from usage import usage_budget
@@ -112,7 +113,7 @@ async def thread_has_turns(backend, thread_id):
 
 async def select(backend, params, state_dir, settings=None):
     settings = settings or load_settings()
-    key = load_key(default_env_file())
+    key = load_key(default_env_file(), key_env=routing_key_env(settings))
     models = await catalog(backend)
     routes = routes_for(models, settings['allow_model'], allowed_efforts=settings['allow_effort'])
     thread_id = params['threadId']
@@ -140,13 +141,14 @@ async def select(backend, params, state_dir, settings=None):
             raise RuntimeError('Codex reports a usage limit. No turn was started.')
     route = await asyncio.to_thread(choose, key, routes, user_request(params), context,
                                     settings['jev_model'], budget, settings['routing_preference'],
-                                    settings['maximum_effort'])
+                                    settings['maximum_effort'], settings)
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     audit(thread_state_path(state_dir, thread_id, '.jsonl'), {'event': 'route', 'thread_id': thread_id,
           'model': route['model'], 'effort': route['effort'], 'confidence': route['confidence'],
           'routing_preference': settings['routing_preference'], 'task_class': route.get('task_class'),
           'request_kind': route.get('request_kind'), 'routing_mode': settings['routing_mode'],
-          'maximum_effort': settings['maximum_effort'],
+          'maximum_effort': settings['maximum_effort'], 'routing_provider': route.get('routing_provider', 'jev'),
+          'routing_model': route.get('routing_model'),
           'policy_adjusted': route.get('policy_adjusted', False),
           'usage_adjusted': route.get('usage_adjusted', False),
           'quota_pressure': budget['pressure_level'] if budget else 'unknown'})

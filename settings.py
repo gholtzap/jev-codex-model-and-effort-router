@@ -4,15 +4,18 @@ import json
 import math
 import os
 import re
+import ipaddress
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 VERSION = '0.4.1'
 DEFAULTS = {'routing_preference': 'balanced', 'maximum_effort': 'automatic',
             'routing_mode': 'thread',
             'usage_policy': 'balanced', 'reserve_percent': 10, 'show_usage': True,
             'usage_limit': 'codex', 'allow_model': None, 'allow_effort': None,
-            'jev_model': 'jev-latest'}
+            'jev_model': 'jev-latest', 'routing_provider': 'jev', 'routing_model': None,
+            'routing_base_url': 'https://api.openai.com/v1', 'routing_api_key_env': None}
 LEGACY_ECONOMY = {'xhigh': 'lowest_usage', 'high': 'lower_usage',
                   'medium': 'balanced', 'low': 'higher_quality'}
 
@@ -90,6 +93,40 @@ def auto_route_requested(root, thread_id):
     return thread_state_path(root, thread_id, '.auto').exists()
 
 
+def validate_base_url(value):
+    if not isinstance(value, str) or any(c.isspace() for c in value):
+        raise ValueError('routing_base_url must be an HTTP API base URL.')
+    url = urlsplit(value)
+    host = url.hostname
+    try:
+        local = host == 'localhost' or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        local = False
+    if (not host or url.username is not None or url.password is not None or url.query or
+            url.fragment or url.scheme not in ('https', 'http') or
+            (url.scheme == 'http' and not local)):
+        raise ValueError('Use an HTTPS API base URL without credentials, query, or fragment. HTTP is allowed only on loopback.')
+    _ = url.port
+    return value.rstrip('/')
+
+
+def routing_api(values):
+    model = values['routing_model'] or (values['jev_model'] if values['routing_provider'] == 'jev' else None)
+    if not model:
+        raise ValueError('Set routing_model to a model available from the selected routing API.')
+    return {'provider': values['routing_provider'], 'model': model,
+            'base_url': values['routing_base_url']}
+
+
+def routing_key_env(values):
+    name = values['routing_api_key_env']
+    if values['routing_provider'] == 'jev':
+        return name or 'JEV_API_KEY'
+    if name is None and urlsplit(values['routing_base_url']).hostname != 'api.openai.com':
+        raise ValueError('Set routing_api_key_env for a custom endpoint. An empty value disables API key authentication.')
+    return 'OPENAI_API_KEY' if name is None else name
+
+
 def validate(values):
     if not isinstance(values, dict):
         raise ValueError('Settings must be an object containing only supported setting names.')
@@ -102,6 +139,16 @@ def validate(values):
     if values.keys() - DEFAULTS.keys():
         raise ValueError('Settings must be an object containing only supported setting names.')
     result = {**DEFAULTS, **values}
+    if result['routing_provider'] not in ('jev', 'openai'):
+        raise ValueError('routing_provider must be jev or openai (OpenAI-compatible).')
+    model = result['routing_model']
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise ValueError('routing_model must be null or a nonempty model ID.')
+    result['routing_base_url'] = validate_base_url(result['routing_base_url'])
+    key_env = result['routing_api_key_env']
+    if key_env is not None and (not isinstance(key_env, str) or
+                               (key_env and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key_env))):
+        raise ValueError('routing_api_key_env must be null, an environment variable name, or an empty string for no authentication.')
     if result['routing_preference'] not in ('lowest_usage', 'lower_usage', 'balanced',
                                              'higher_quality', 'highest_quality'):
         raise ValueError('routing_preference must be lowest_usage, lower_usage, balanced, higher_quality, or highest_quality.')
@@ -149,6 +196,9 @@ def set_setting(name, value, path=None):
     with open(path.with_suffix('.lock'), 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         values = load_settings(path)
+        if name == 'routing_provider' and values[name] != value:
+            values['routing_model'] = None
+            values['routing_api_key_env'] = None
         values[name] = value
         private_write(path, validate(values))
 
