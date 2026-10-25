@@ -16,6 +16,7 @@ from unittest.mock import patch
 from websockets.asyncio.client import unix_connect
 from websockets.asyncio.server import unix_serve
 import jev_client
+import install
 import settings
 from native_proxy import relay
 from router import choose, routes_for
@@ -30,15 +31,26 @@ def endpoint(transform=None):
         def do_POST(self):
             body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             receipts.append({'path':self.path,'body':body,'authorization':self.headers.get('Authorization')})
-            schema=body['response_format']['json_schema']['schema']['properties']['answers']['properties']
+            if self.path == '/v1/decisions':
+                if any(not 2 <= len(q['choices']) <= 255 for q in body['questions']):
+                    self.send_response(400);self.end_headers();return
+                questions={q['name']:[c['value'] for c in q['choices']] for q in body['questions']}
+            else:
+                schema=body['response_format']['json_schema']['schema']['properties']['answers']['properties']
+                questions={name:value['properties']['choice']['enum'] for name,value in schema.items()}
             answers={}
-            for name,value in schema.items():
-                choices=value['properties']['choice']['enum']
+            for name,choices in questions.items():
                 selected='task' if name=='request_kind' else 'routine' if name=='task_class' else choices[0]
                 answers[name]={'type':'choice','choice':selected,'confidence':1,
                                'probabilities':{c:int(c==selected) for c in choices}}
-            result={'model':body['model'],'usage':{'total_tokens':10},'choices':[{
-                'finish_reason':'stop','message':{'content':json.dumps({'answers':answers})}}]}
+            if self.path == '/v1/decisions':
+                result={'model':body['model'],'usage':{'input_tokens':10,'output_tokens':0,'total_tokens':10},
+                        'answers':[{**a,'name':name,'probabilities':[
+                            {'value':v,'probability':p} for v,p in a['probabilities'].items()]}
+                            for name,a in reversed(list(answers.items()))]}
+            else:
+                result={'model':body['model'],'usage':{'total_tokens':10},'choices':[{
+                    'finish_reason':'stop','message':{'content':json.dumps({'answers':answers})}}]}
             status,headers,result=(transform(result,receipts) if transform else (200,{},result))
             data=json.dumps(result).encode();self.send_response(status)
             for name,value in headers.items():self.send_header(name,value)
@@ -64,6 +76,68 @@ class ProviderApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(r['path']=='/v1/chat/completions' for r in receipts))
             self.assertTrue(all(r['authorization']=='Bearer fixture-key' for r in receipts))
             self.assertTrue(all(r['body']['response_format']['json_schema']['strict'] for r in receipts))
+
+    def test_decisions_uses_native_questions_and_probabilities(self):
+        with endpoint() as (url,receipts):
+            api=settings.validate({'routing_provider':'openai_decisions','routing_base_url':url,
+                                   'routing_api_key_env':'TEST_ROUTER_KEY'})
+            self.assertEqual(settings.routing_api(api)['model'],'gpt-6-luna')
+            result=choose('fixture-key',routes_for([MODEL]),'Do a narrow edit',{},'jev-latest',
+                          None,'balanced','automatic',api)
+            self.assertEqual(result['routing_provider'],'openai_decisions')
+            self.assertEqual(result['routing_model'],'gpt-6-luna')
+            self.assertEqual(result['routing_usage']['input_tokens'],10)
+            self.assertEqual(result['model'],MODEL['model'])
+            request=receipts[0];self.assertEqual(request['path'],'/v1/decisions')
+            self.assertNotIn('response_format',request['body'])
+            self.assertEqual(request['body']['input'][0]['content'][0]['type'],'input_json')
+            self.assertEqual(request['body']['input'][0]['content'][0]['data']['request'],'Do a narrow edit')
+            self.assertEqual({q['name'] for q in request['body']['questions']},
+                             {'request_kind','task_class'})
+            self.assertTrue(all(q['type']=='choice' and q['choices'] and q['instructions']
+                                for q in request['body']['questions']))
+            self.assertEqual(settings.routing_key_env(settings.validate({
+                'routing_provider':'openai_decisions'})),'OPENAI_API_KEY')
+            api['routing_model']='another-decision-model'
+            self.assertEqual(settings.routing_api(api)['model'],'another-decision-model')
+
+    def test_decisions_handles_single_option_and_connection_check(self):
+        with endpoint() as (url,receipts):
+            api=settings.validate({'routing_provider':'openai_decisions','routing_base_url':url,
+                                   'routing_api_key_env':'TEST_ROUTER_KEY'})
+            question={'route':{'type':'choice','instructions':'Select','criteria':{'one':'One'}}}
+            result=jev_client.ask('fixture-key',{},question,'gpt-6-luna',
+                                  provider='openai_decisions',base_url=url)
+            self.assertEqual(result['answers']['route']['probabilities'],{'one':1})
+            self.assertEqual(len(receipts),0)
+            with patch('install.load_settings',return_value=api):install.verify_jev('fixture-key')
+            self.assertEqual(len(receipts),1)
+            self.assertTrue(all(2<=len(q['choices'])<=255 for q in receipts[0]['body']['questions']))
+
+    def test_decisions_rejects_refusals_incomplete_and_duplicate_answers(self):
+        # Failures: refusal, wrong type/name/choice, missing or duplicate answers or
+        # probabilities, invalid numbers, HTTP failure, redirect, and provider fallback.
+        def refusal(r,_):r['answers'][0]={'type':'refusal','name':'route'};return 200,{},r
+        def wrong_type(r,_):r['answers'][0]['type']='predicate';return 200,{},r
+        def missing(r,_):r['answers']=[];return 200,{},r
+        def duplicate(r,_):r['answers']*=2;return 200,{},r
+        def wrong_name(r,_):r['answers'][0]['name']='unknown';return 200,{},r
+        def unknown(r,_):r['answers'][0]['choice']='unknown';return 200,{},r
+        def no_probabilities(r,_):r['answers'][0]['probabilities']=[];return 200,{},r
+        def duplicate_probability(r,_):r['answers'][0]['probabilities']*=2;return 200,{},r
+        def nan(r,_):r['answers'][0]['confidence']=float('nan');return 200,{},r
+        def redirect(r,_):return 302,{'Location':'/stolen'},r
+        def unauthorized(r,_):return 401,{}, {'error':'Do not print fixture-key'}
+        questions={'route':{'type':'choice','instructions':'Select','criteria':{'one':'One','two':'Two'}}}
+        for response in [refusal,wrong_type,missing,duplicate,wrong_name,unknown,
+                         no_probabilities,duplicate_probability,nan,redirect,unauthorized]:
+            with self.subTest(response=response.__name__),endpoint(response) as (url,receipts), \
+                    patch('jev_client.urlopen',side_effect=AssertionError('Unexpected Jev request')):
+                with self.assertRaises(jev_client.JevError) as error:
+                    jev_client.ask('fixture-key',{},questions,'gpt-6-luna',
+                                   provider='openai_decisions',base_url=url)
+                self.assertNotIn('fixture-key',str(error.exception))
+                self.assertEqual(len(receipts),1)
 
     def test_bad_responses_and_redirects_fail_without_provider_fallback(self):
         def refusal(r,_):r['choices'][0]['message']={'refusal':'No'};return 200,{},r
@@ -121,13 +195,16 @@ class ProviderApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(saved['routing_model'])
             self.assertIsNone(saved['routing_api_key_env'])
 
-    async def test_configured_api_routes_a_real_relay_request(self):
+    async def test_decisions_routes_a_real_relay_request(self):
+        await self.test_configured_api_routes_a_real_relay_request('openai_decisions')
+
+    async def test_configured_api_routes_a_real_relay_request(self, provider='openai'):
         with tempfile.TemporaryDirectory(prefix='rp-') as directory,endpoint() as (url,receipts):
             root=Path(directory)
             env={'XDG_CONFIG_HOME':str(root/'config'),'TEST_ROUTER_KEY':'relay-fixture-key'}
             with patch.dict(os.environ,env):
                 settings.private_write(settings.config_path(),settings.validate({
-                    'routing_provider':'openai','routing_model':'my-routing-model','routing_base_url':url,
+                    'routing_provider':provider,'routing_model':'my-routing-model','routing_base_url':url,
                     'routing_api_key_env':'TEST_ROUTER_KEY','usage_policy':'quality','routing_mode':'turn'}))
                 state={'model':MODEL['model'],'reasoningEffort':'low'};forwarded=[]
                 async def backend(c):

@@ -93,8 +93,10 @@ def verify(codex, key, check_jev=True):
 def verify_jev(key):
     options = routing_api(load_settings())
     result = ask(key, 'Installation check.', {'check': {'type': 'choice',
-                 'instructions': 'Select ready.', 'criteria': {'ready': 'The connection is ready.'}}}, **options)
-    validate_choice(result['answers'].get('check'), {'ready'})
+                 'instructions': 'Select ready.', 'criteria': {'ready': 'The connection is ready.',
+                 'not_ready': 'The connection is not ready.'}}}, **options)
+    if validate_choice(result['answers'].get('check'), {'ready', 'not_ready'}) != 'ready':
+        raise JevError('The routing API connection check did not select ready.')
     print('Routing API connection passed.')
 
 
