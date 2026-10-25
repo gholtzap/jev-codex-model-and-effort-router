@@ -48,10 +48,12 @@ def main():
                 from native import run
                 return run(args)
         if args[:1] == ['--original']:
-            if first_argument(args[1:]) in {'exec', 'e', 'review', 'app-server', 'mcp-server'} and not any(
+            command = first_argument(args[1:])
+            worker = command in {'exec', 'e', 'review', 'app-server', 'mcp-server'}
+            if (worker or command not in NATIVE_COMMANDS) and not any(
                     option in args for option in ('--help', '-h', '--version', '-V')):
                 from native import check_host_memory
-                status = check_host_memory()
+                status = check_host_memory(interactive=not worker)
                 if status:
                     return status
             binary = installed_codex()

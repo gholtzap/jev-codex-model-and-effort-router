@@ -164,7 +164,7 @@ async def relay(client, backend_socket, state_dir):
                 params = message.get('params', {})
                 if message.get('method') == 'turn/start':
                     from native import check_host_memory
-                    if await asyncio.to_thread(check_host_memory):
+                    if await asyncio.to_thread(check_host_memory, interactive=True):
                         await client.send(json.dumps({'id': message['id'], 'error': {
                             'code': -32000, 'message': 'Host memory is low. Save or close unused work, then retry.'}}))
                         continue

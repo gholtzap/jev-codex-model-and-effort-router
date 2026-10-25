@@ -1,5 +1,6 @@
 """Launch the standard Codex terminal UI through the Jev route relay."""
 import subprocess
+import json
 import os
 import shutil
 import signal
@@ -34,9 +35,28 @@ def key_action():
         print('Enter a, u, or press Enter.')
 
 
-def check_host_memory():
+def check_host_memory(interactive=False):
     guard = shutil.which('host-memory-check')
     if guard:
+        if interactive:
+            try:
+                result = subprocess.run([guard, '--sample'], capture_output=True, text=True, timeout=10)
+                if result.returncode:
+                    raise ValueError('Memory probe failed.')
+                sample = json.loads(result.stdout)
+                if not isinstance(sample, dict) or type(sample.get('supported')) is not bool:
+                    raise ValueError('Invalid memory sample.')
+                if sample['supported']:
+                    pressure = sample.get('pressure')
+                    if 'error' in sample or type(pressure) is not int or pressure not in (1, 2, 4):
+                        raise ValueError('Invalid memory pressure.')
+                    if pressure == 4:
+                        print('Host memory pressure is critical. Save or close unused work, then retry.', file=sys.stderr)
+                        return 75
+                return 0
+            except (OSError, ValueError, subprocess.SubprocessError):
+                print('The host memory check failed.', file=sys.stderr)
+                return 75
         result = subprocess.run([guard], check=False)
         if result.returncode:
             return result.returncode
@@ -44,7 +64,7 @@ def check_host_memory():
 
 
 def run(args):
-    status = check_host_memory()
+    status = check_host_memory(interactive=True)
     if status:
         return status
     codex = installed_codex()
