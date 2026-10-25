@@ -256,10 +256,13 @@ async def relay(client, backend_socket, state_dir):
                 await client.send(raw)
 
         tasks = [asyncio.create_task(to_backend()), asyncio.create_task(to_client())]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         for task in done:
             try:
                 task.result()
@@ -280,8 +283,34 @@ async def backend_idle(socket):
                 cursor = page.get('nextCursor')
                 if not cursor:
                     return True
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, TimeoutError, ConnectionClosed):
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, asyncio.TimeoutError, ConnectionClosed):
         return False
+
+
+async def stop_backend(process):
+    started = time.monotonic()
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(process.wait(), 3)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
+    while time.monotonic() - started < 5:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        await asyncio.sleep(.1)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 async def serve(codex, socket, state_dir, owner_pid=None, orphan_grace=60):
@@ -340,6 +369,8 @@ async def serve(codex, socket, state_dir, owner_pid=None, orphan_grace=60):
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+            # Stop the backend before waiting for its WebSocket clients to close.
+            await stop_backend(process)
             for handler in list(handlers):
                 handler.cancel()
             await asyncio.gather(*list(handlers), return_exceptions=True)
@@ -349,30 +380,7 @@ async def serve(codex, socket, state_dir, owner_pid=None, orphan_grace=60):
         if watcher:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        if process.returncode is None:
-            try:
-                await asyncio.wait_for(process.wait(), 5)
-            except TimeoutError:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await process.wait()
-        for _ in range(50):
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                break
-            await asyncio.sleep(.1)
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        await stop_backend(process)
         socket.unlink(missing_ok=True)
         backend_socket.unlink(missing_ok=True)
 
