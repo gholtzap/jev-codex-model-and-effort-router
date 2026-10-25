@@ -110,9 +110,16 @@ def validate_base_url(value):
     return value.rstrip('/')
 
 
+def provider_defaults(provider):
+    return {'routing_model': None, 'routing_api_key_env': None,
+            'routing_base_url': 'https://openrouter.ai/api/alpha' if provider == 'openrouter'
+            else DEFAULTS['routing_base_url']}
+
+
 def routing_api(values):
     model = values['routing_model'] or ({'jev': values['jev_model'],
-                                        'openai_decisions': 'gpt-6-luna'}.get(values['routing_provider']))
+                                        'openai_decisions': 'gpt-6-luna',
+                                        'openrouter': 'typesafe/jev-1.14'}.get(values['routing_provider']))
     if not model:
         raise ValueError('Set routing_model to a model available from the selected routing API.')
     return {'provider': values['routing_provider'], 'model': model,
@@ -123,9 +130,12 @@ def routing_key_env(values):
     name = values['routing_api_key_env']
     if values['routing_provider'] == 'jev':
         return name or 'JEV_API_KEY'
-    if name is None and urlsplit(values['routing_base_url']).hostname != 'api.openai.com':
+    host, default_key = (('openrouter.ai', 'OPENROUTER_API_KEY')
+                         if values['routing_provider'] == 'openrouter'
+                         else ('api.openai.com', 'OPENAI_API_KEY'))
+    if name is None and urlsplit(values['routing_base_url']).hostname != host:
         raise ValueError('Set routing_api_key_env for a custom endpoint. An empty value disables API key authentication.')
-    return 'OPENAI_API_KEY' if name is None else name
+    return default_key if name is None else name
 
 
 def validate(values):
@@ -139,9 +149,9 @@ def validate(values):
         values.setdefault('routing_preference', LEGACY_ECONOMY[legacy])
     if values.keys() - DEFAULTS.keys():
         raise ValueError('Settings must be an object containing only supported setting names.')
-    result = {**DEFAULTS, **values}
-    if result['routing_provider'] not in ('jev', 'openai_decisions', 'openai'):
-        raise ValueError('routing_provider must be jev, openai_decisions, or openai (Chat Completions).')
+    result = {**DEFAULTS, **provider_defaults(values.get('routing_provider', 'jev')), **values}
+    if result['routing_provider'] not in ('jev', 'openai_decisions', 'openrouter', 'openai'):
+        raise ValueError('routing_provider must be jev, openai_decisions, openrouter, or openai (Chat Completions).')
     model = result['routing_model']
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError('routing_model must be null or a nonempty model ID.')
@@ -184,7 +194,12 @@ def load_settings(path=None, overrides=None):
     path = path or config_path()
     values = json.loads(path.read_text()) if path.exists() else {}
     # Validate saved values even when a command-line option would hide the error.
-    return validate({**validate(values), **(overrides or {})})
+    saved = validate(values)
+    overrides = overrides or {}
+    provider = overrides.get('routing_provider', saved['routing_provider'])
+    if provider != saved['routing_provider']:
+        saved.update(provider_defaults(provider))
+    return validate({**saved, **overrides})
 
 
 def set_setting(name, value, path=None):
@@ -198,8 +213,7 @@ def set_setting(name, value, path=None):
         fcntl.flock(lock, fcntl.LOCK_EX)
         values = load_settings(path)
         if name == 'routing_provider' and values[name] != value:
-            values['routing_model'] = None
-            values['routing_api_key_env'] = None
+            values.update(provider_defaults(value))
         values[name] = value
         private_write(path, validate(values))
 

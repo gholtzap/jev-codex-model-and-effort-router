@@ -40,6 +40,10 @@ final class SettingsStore {
         values[key] as? Bool ?? fallback
     }
 
+    static func routingBaseURL(for provider: String) -> String {
+        provider == "openrouter" ? "https://openrouter.ai/api/alpha" : "https://api.openai.com/v1"
+    }
+
     func set(_ value: Any, for key: String) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -62,6 +66,7 @@ final class SettingsStore {
            provider != string("routing_provider", default: "jev") {
             values["routing_model"] = NSNull()
             values["routing_api_key_env"] = NSNull()
+            values["routing_base_url"] = Self.routingBaseURL(for: provider)
         }
         values[key] = value
         var data = try JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted, .sortedKeys])
@@ -133,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu(
             title: "Routing API",
             values: [("Jev", "jev"), ("OpenAI Decisions", "openai_decisions"),
+                     ("OpenRouter Decisions", "openrouter"),
                      ("Chat Completions-compatible", "openai")],
             selected: store.string("routing_provider", default: "jev"),
             action: #selector(selectRoutingProvider(_:))
@@ -286,18 +292,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func editRoutingModel(_ sender: NSMenuItem) {
-        let fallback = store.string("routing_provider", default: "jev") == "jev"
-            ? store.string("jev_model", default: "jev-latest")
-            : (store.string("routing_provider", default: "jev") == "openai_decisions" ? "gpt-6-luna" : "")
+        let provider = store.string("routing_provider", default: "jev")
+        let fallback = provider == "jev" ? store.string("jev_model", default: "jev-latest")
+            : (["openai_decisions": "gpt-6-luna", "openrouter": "typesafe/jev-1.14"][provider] ?? "")
         editRoutingText(title: "Routing model ID", key: "routing_model", fallback: fallback)
     }
 
     @objc private func editRoutingEndpoint(_ sender: NSMenuItem) {
-        editRoutingText(title: "API base URL", key: "routing_base_url", fallback: "https://api.openai.com/v1")
+        editRoutingText(title: "API base URL", key: "routing_base_url", fallback: SettingsStore.routingBaseURL(for: store.string("routing_provider", default: "jev")))
     }
 
     @objc private func editRoutingCredential(_ sender: NSMenuItem) {
-        editRoutingText(title: "API key environment variable", key: "routing_api_key_env", fallback: "OPENAI_API_KEY")
+        editRoutingText(title: "API key environment variable", key: "routing_api_key_env", fallback: store.string("routing_provider", default: "jev") == "openrouter" ? "OPENROUTER_API_KEY" : "OPENAI_API_KEY")
     }
 
     private func editRoutingText(title: String, key: String, fallback: String) {
@@ -427,6 +433,17 @@ enum JevCodexSettings {
                       store.values["routing_model"] is NSNull,
                       store.values["routing_api_key_env"] is NSNull else {
                     throw SettingsError.message("Changing APIs must reset the model and credential selection.")
+                }
+                try store.set("openrouter", for: "routing_provider")
+                try store.reload()
+                guard store.string("routing_base_url", default: "") == "https://openrouter.ai/api/alpha",
+                      store.values["routing_model"] is NSNull,
+                      store.values["routing_api_key_env"] is NSNull else {
+                    throw SettingsError.message("OpenRouter must use its own endpoint and credential defaults.")
+                }
+                try store.set("openai_decisions", for: "routing_provider")
+                guard store.string("routing_base_url", default: "") == "https://api.openai.com/v1" else {
+                    throw SettingsError.message("Changing APIs must reset the endpoint.")
                 }
                 print("Settings check passed.")
             } catch {
