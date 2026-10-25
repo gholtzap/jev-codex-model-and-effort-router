@@ -238,7 +238,7 @@ class InstallTests(unittest.TestCase):
         check.assert_called_once_with('key')
 
         with patch('install.ask', return_value={'answers': {'check': {
-                'type': 'choice', 'choice': 'ready', 'probabilities': {'ready': 1}, 'confidence': 1}}}), \
+                'type': 'choice', 'choice': 'ready', 'probabilities': {'ready': 1, 'not_ready': 0}, 'confidence': 1}}}), \
              patch('sys.stdout', new_callable=io.StringIO) as output:
             install.verify_jev('private-key')
         self.assertNotIn('private-key', output.getvalue())

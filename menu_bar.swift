@@ -132,14 +132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(submenu(
             title: "Routing API",
-            values: [("Jev", "jev"), ("OpenAI-compatible", "openai")],
+            values: [("Jev", "jev"), ("OpenAI Decisions", "openai_decisions"),
+                     ("Chat Completions-compatible", "openai")],
             selected: store.string("routing_provider", default: "jev"),
             action: #selector(selectRoutingProvider(_:))
         ))
         let routingModel = NSMenuItem(title: "Routing model…", action: #selector(editRoutingModel(_:)), keyEquivalent: "")
         routingModel.target = self
         menu.addItem(routingModel)
-        if store.string("routing_provider", default: "jev") == "openai" {
+        if store.string("routing_provider", default: "jev") != "jev" {
             let endpoint = NSMenuItem(title: "Routing endpoint…", action: #selector(editRoutingEndpoint(_:)), keyEquivalent: "")
             endpoint.target = self
             menu.addItem(endpoint)
@@ -286,7 +287,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func editRoutingModel(_ sender: NSMenuItem) {
         let fallback = store.string("routing_provider", default: "jev") == "jev"
-            ? store.string("jev_model", default: "jev-latest") : ""
+            ? store.string("jev_model", default: "jev-latest")
+            : (store.string("routing_provider", default: "jev") == "openai_decisions" ? "gpt-6-luna" : "")
         editRoutingText(title: "Routing model ID", key: "routing_model", fallback: fallback)
     }
 
@@ -419,8 +421,10 @@ enum JevCodexSettings {
                       store.string("routing_api_key_env", default: "") == "CUSTOM_ROUTER_KEY" else {
                     throw SettingsError.message("The routing API settings did not reload.")
                 }
-                try store.set("jev", for: "routing_provider")
-                guard store.values["routing_model"] is NSNull,
+                try store.set("openai_decisions", for: "routing_provider")
+                try store.reload()
+                guard store.string("routing_provider", default: "") == "openai_decisions",
+                      store.values["routing_model"] is NSNull,
                       store.values["routing_api_key_env"] is NSNull else {
                     throw SettingsError.message("Changing APIs must reset the model and credential selection.")
                 }

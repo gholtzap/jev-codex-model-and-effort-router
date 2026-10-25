@@ -102,7 +102,7 @@ def agent_instructions(server, overrides, settings_file):
         'show_usage (true or false), allow_model (JSON array of available model names, or null for all), '
         'allow_effort (JSON array of effort names, or null for all), '
         'usage_limit (bucket name), jev_model (legacy Jev model), '
-        'routing_provider (jev or openai), routing_model (routing model ID), '
+        'routing_provider (jev, openai_decisions, or openai), routing_model (routing model ID), '
         'routing_base_url (API base URL), routing_api_key_env (API key environment variable name; empty for no authentication). '
         'Never read or print credentials to change routing settings. Changes apply before the next turn. '
         'These command-line overrides stay in effect for this session: ' + json.dumps(overrides) + '. '
@@ -394,7 +394,7 @@ def main():
     parser.add_argument('--allow-effort', action='append', default=argparse.SUPPRESS, help='Restrict routing to this effort; repeat as needed')
     parser.add_argument('--policy', type=Path, help='JSON route map with model, effort, and description per route')
     parser.add_argument('--jev-model', default=argparse.SUPPRESS)
-    parser.add_argument('--routing-provider', choices=['jev', 'openai'], default=argparse.SUPPRESS)
+    parser.add_argument('--routing-provider', choices=['jev', 'openai_decisions', 'openai'], default=argparse.SUPPRESS)
     parser.add_argument('--routing-model', default=argparse.SUPPRESS)
     parser.add_argument('--routing-base-url', default=argparse.SUPPRESS)
     parser.add_argument('--routing-api-key-env', default=argparse.SUPPRESS)

@@ -111,7 +111,8 @@ def validate_base_url(value):
 
 
 def routing_api(values):
-    model = values['routing_model'] or (values['jev_model'] if values['routing_provider'] == 'jev' else None)
+    model = values['routing_model'] or ({'jev': values['jev_model'],
+                                        'openai_decisions': 'gpt-6-luna'}.get(values['routing_provider']))
     if not model:
         raise ValueError('Set routing_model to a model available from the selected routing API.')
     return {'provider': values['routing_provider'], 'model': model,
@@ -139,8 +140,8 @@ def validate(values):
     if values.keys() - DEFAULTS.keys():
         raise ValueError('Settings must be an object containing only supported setting names.')
     result = {**DEFAULTS, **values}
-    if result['routing_provider'] not in ('jev', 'openai'):
-        raise ValueError('routing_provider must be jev or openai (OpenAI-compatible).')
+    if result['routing_provider'] not in ('jev', 'openai_decisions', 'openai'):
+        raise ValueError('routing_provider must be jev, openai_decisions, or openai (Chat Completions).')
     model = result['routing_model']
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError('routing_model must be null or a nonempty model ID.')

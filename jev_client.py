@@ -1,4 +1,4 @@
-"""Structured routing decisions from Jev or an OpenAI-compatible API."""
+"""Structured routing decisions from native decision APIs or Chat Completions."""
 import json
 import math
 import os
@@ -81,6 +81,25 @@ def ask(key, state, questions, model='jev-latest', *, provider='jev', base_url='
         url, label = 'https://api.typesafe.ai/v1/systemone', 'TypeSafe'
         payload = dict(model=model, state=state, questions=questions)
         send = urlopen
+    elif provider == 'openai_decisions':
+        if not 1 <= len(questions) <= 400 or any(
+                q.get('type') != 'choice' or not 1 <= len(q.get('criteria', {})) <= 255
+                for q in questions.values()):
+            raise JevError('OpenAI Decisions requires 1 to 400 choice questions with 1 to 255 routes each.')
+        # A single allowed route needs no model decision; the API requires at least two choices.
+        fixed = {name: {'type': 'choice', 'choice': next(iter(q['criteria'])),
+                       'confidence': 1, 'probabilities': {next(iter(q['criteria'])): 1}}
+                 for name, q in questions.items() if len(q['criteria']) == 1}
+        if len(fixed) == len(questions):
+            return {'answers': fixed, 'model': model, 'usage': None}
+        url, label = validate_base_url(base_url) + '/decisions', 'OpenAI Decisions'
+        payload = {'model': model, 'input': [{'role': 'user', 'content': [
+            {'type': 'input_json', 'data': state if isinstance(state, dict) else {'state': state}}]}], 'questions': [
+                {'type': 'choice', 'name': name, 'instructions': q['instructions'],
+                 'choices': [{'value': value, 'description': description}
+                             for value, description in q['criteria'].items()]}
+                for name, q in questions.items() if name not in fixed]}
+        send = build_opener(NoRedirect()).open
     elif provider == 'openai':
         url, label = validate_base_url(base_url) + '/chat/completions', 'Routing API'
         payload = {'model': model, 'messages': [
@@ -101,6 +120,27 @@ def ask(key, state, questions, model='jev-latest', *, provider='jev', base_url='
         try:
             with send(request, timeout=30) as response:
                 result = json.load(response)
+            if provider == 'openai_decisions':
+                try:
+                    answers = result['answers']
+                    if not isinstance(answers, list) or len(answers) != len(questions) - len(fixed):
+                        raise ValueError('Incomplete answers')
+                    normalized = dict(fixed)
+                    for answer in answers:
+                        name = answer['name']
+                        if name not in questions or name in normalized or answer['type'] != 'choice':
+                            raise ValueError('Invalid or refused answer')
+                        probabilities = answer['probabilities']
+                        if not isinstance(probabilities, list):
+                            raise ValueError('Invalid probabilities')
+                        converted = {p['value']: p['probability'] for p in probabilities}
+                        if len(converted) != len(probabilities):
+                            raise ValueError('Duplicate probabilities')
+                        normalized[name] = {**answer, 'probabilities': converted}
+                        validate_choice(normalized[name], questions[name]['criteria'])
+                    result = {**result, 'answers': normalized}
+                except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+                    raise JevError('OpenAI Decisions returned an invalid, refused, or incomplete decision.') from None
             if provider == 'openai':
                 try:
                     choices = result['choices']
