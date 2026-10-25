@@ -18,7 +18,7 @@ from settings import atomic_write, config_path, data_dir, load_settings, private
 from usage import read_budget, show_budget
 
 FILES = ('cli.py', 'router.py', 'appserver.py', 'jev_client.py', 'usage.py',
-         'settings.py', 'install.py', 'native.py', 'native_proxy.py', 'menu_bar.swift')
+         'settings.py', 'install.py', 'native.py', 'native_proxy.py', 'proxy_cleanup.py', 'menu_bar.swift')
 MARKER = '# Jev Codex managed launcher'
 WEBSOCKETS_VERSION = '16.1.1'
 TYPESAFE_CONSOLE = 'https://console.typesafe.ai'

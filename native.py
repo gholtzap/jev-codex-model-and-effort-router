@@ -1,5 +1,8 @@
 """Launch the standard Codex terminal UI through the Jev route relay."""
 import subprocess
+import os
+import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -31,7 +34,19 @@ def key_action():
         print('Enter a, u, or press Enter.')
 
 
+def check_host_memory():
+    guard = shutil.which('host-memory-check')
+    if guard:
+        result = subprocess.run([guard], check=False)
+        if result.returncode:
+            return result.returncode
+    return 0
+
+
 def run(args):
+    status = check_host_memory()
+    if status:
+        return status
     codex = installed_codex()
     try:
         action = key_action()
@@ -52,9 +67,15 @@ def run(args):
             relay = subprocess.Popen([
                 sys.executable, str(Path(__file__).with_name('native_proxy.py')),
                 '--codex', codex, '--socket', str(socket),
-                '--state-dir', str(state_dir())],
+                '--state-dir', str(state_dir()), '--owner-pid', str(os.getpid())],
                 stdin=subprocess.DEVNULL, stdout=output, stderr=output, start_new_session=True)
+            terminal = None
+            previous_signals = {}
+            def stop(signum, _):
+                raise SystemExit(128 + signum)
             try:
+                for signum in (signal.SIGTERM, signal.SIGHUP):
+                    previous_signals[signum] = signal.signal(signum, stop)
                 for _ in range(100):
                     if socket.exists():
                         break
@@ -63,12 +84,22 @@ def run(args):
                     time.sleep(0.1)
                 else:
                     raise TimeoutError('Jev route relay did not start.')
-                return subprocess.call([codex, '--remote', f'unix://{socket}', *args])
+                terminal = subprocess.Popen([codex, '--remote', f'unix://{socket}', *args])
+                return terminal.wait()
             finally:
+                for signum, handler in previous_signals.items():
+                    signal.signal(signum, handler)
+                if terminal and terminal.poll() is None:
+                    terminal.terminate()
+                    try:
+                        terminal.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        terminal.kill()
+                        terminal.wait()
                 if relay.poll() is None:
                     relay.terminate()
                     try:
-                        relay.wait(timeout=5)
+                        relay.wait(timeout=10)
                     except subprocess.TimeoutExpired:
                         relay.kill()
                         relay.wait()

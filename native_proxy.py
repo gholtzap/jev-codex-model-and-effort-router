@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).with_name('vendor')))
@@ -161,6 +162,12 @@ async def relay(client, backend_socket, state_dir):
             async for raw in client:
                 message = json.loads(raw)
                 params = message.get('params', {})
+                if message.get('method') == 'turn/start':
+                    from native import check_host_memory
+                    if await asyncio.to_thread(check_host_memory):
+                        await client.send(json.dumps({'id': message['id'], 'error': {
+                            'code': -32000, 'message': 'Host memory is low. Save or close unused work, then retry.'}}))
+                        continue
                 if message.get('method') == 'thread/settings/update':
                     settings = load_settings()
                     if settings['routing_mode'] == 'thread' and request_route(params):
@@ -249,10 +256,13 @@ async def relay(client, backend_socket, state_dir):
                 await client.send(raw)
 
         tasks = [asyncio.create_task(to_backend()), asyncio.create_task(to_client())]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         for task in done:
             try:
                 task.result()
@@ -260,10 +270,82 @@ async def relay(client, backend_socket, state_dir):
                 pass
 
 
-async def serve(codex, socket, state_dir):
+async def backend_idle(socket):
+    try:
+        async with Backend(socket) as backend:
+            cursor = None
+            while True:
+                page = await backend.call('thread/loaded/list', {'cursor': cursor, 'limit': 100})
+                for thread_id in page['data']:
+                    result = await backend.call('thread/read', {'threadId': thread_id, 'includeTurns': False})
+                    if result['thread'].get('status', {}).get('type') not in ('idle', 'notLoaded'):
+                        return False
+                cursor = page.get('nextCursor')
+                if not cursor:
+                    return True
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, asyncio.TimeoutError, ConnectionClosed):
+        return False
+
+
+async def stop_backend(process):
+    started = time.monotonic()
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(process.wait(), 3)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
+    while time.monotonic() - started < 5:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        await asyncio.sleep(.1)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+async def serve(codex, socket, state_dir, owner_pid=None, orphan_grace=60):
+    owner_pid = owner_pid or os.getppid()
     backend_socket = socket.with_name('backend.sock')
     stop = asyncio.Event()
     asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stop.set)
+    asyncio.get_running_loop().add_signal_handler(signal.SIGHUP, stop.set)
+    clients = set()
+    handlers = set()
+
+    async def connected(client):
+        clients.add(client)
+        task = asyncio.current_task()
+        handlers.add(task)
+        try:
+            await relay(client, backend_socket, state_dir)
+        finally:
+            clients.discard(client)
+            handlers.discard(task)
+
+    async def watch_owner():
+        abandoned_at = None
+        while not stop.is_set():
+            if (os.getppid() == owner_pid and owner_pid != 1) or clients:
+                abandoned_at = None
+            else:
+                abandoned_at = abandoned_at or time.monotonic()
+                if time.monotonic() - abandoned_at >= orphan_grace and await backend_idle(backend_socket):
+                    if not clients:
+                        stop.set()
+                        return
+            await asyncio.sleep(1)
+
+    watcher = None
     process = await asyncio.create_subprocess_exec(
         codex, 'app-server', '--listen', f'unix://{backend_socket}',
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -277,25 +359,30 @@ async def serve(codex, socket, state_dir):
             await asyncio.sleep(0.1)
         else:
             raise TimeoutError('Codex app server did not start.')
-        async with unix_serve(lambda client: relay(client, backend_socket, state_dir),
+        async with unix_serve(connected,
                               str(socket), max_size=None, compression=None, ping_interval=None):
             os.chmod(socket, 0o600)
+            watcher = asyncio.create_task(watch_owner())
             stopped = asyncio.create_task(stop.wait())
             exited = asyncio.create_task(process.wait())
             done, pending = await asyncio.wait((stopped, exited), return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+            # Stop the backend before waiting for its WebSocket clients to close.
+            await stop_backend(process)
+            for handler in list(handlers):
+                handler.cancel()
+            await asyncio.gather(*list(handlers), return_exceptions=True)
             if exited in done and not stop.is_set():
                 raise RuntimeError('Codex app server stopped.')
     finally:
-        if process.returncode is None:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(process.wait(), 5)
-            except TimeoutError:
-                os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
+        if watcher:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+        await stop_backend(process)
+        socket.unlink(missing_ok=True)
+        backend_socket.unlink(missing_ok=True)
 
 
 def main():
@@ -303,8 +390,9 @@ def main():
     parser.add_argument('--codex', required=True)
     parser.add_argument('--socket', type=Path, required=True)
     parser.add_argument('--state-dir', type=Path, required=True)
+    parser.add_argument('--owner-pid', type=int)
     args = parser.parse_args()
-    asyncio.run(serve(args.codex, args.socket, args.state_dir))
+    asyncio.run(serve(args.codex, args.socket, args.state_dir, owner_pid=args.owner_pid))
 
 
 if __name__ == '__main__':
