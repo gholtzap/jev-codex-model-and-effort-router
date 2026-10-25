@@ -1,4 +1,4 @@
-# Local process and memory checks
+# Jev process lifecycle
 
 The terminal launcher passes its process ID to the proxy. If that owner exits,
 the proxy waits at least 60 seconds without a connected client. It then checks
@@ -20,11 +20,7 @@ and backend status. It repeats the checks before sending a normal termination
 signal. It does not force termination of an old proxy whose shutdown fails.
 Save its JSON output as the cleanup record.
 
-If `host-memory-check` is on PATH, Jev uses it before a new terminal session,
-worker, or turn starts. A nonzero exit blocks the new work. Interruptions and
-existing turns can still finish. The host check is optional on other hosts;
-install it as part of the Mac's local runtime setup. Existing proxy processes
-keep the code from their original release until they exit.
+Existing proxy processes keep the code from their original release until they exit.
 
 Run the real-server check from the source repository with:
 

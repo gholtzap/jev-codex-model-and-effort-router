@@ -48,14 +48,6 @@ def main():
                 from native import run
                 return run(args)
         if args[:1] == ['--original']:
-            command = first_argument(args[1:])
-            worker = command in {'exec', 'e', 'review', 'app-server', 'mcp-server'}
-            if (worker or command not in NATIVE_COMMANDS) and not any(
-                    option in args for option in ('--help', '-h', '--version', '-V')):
-                from native import check_host_memory
-                status = check_host_memory(interactive=not worker)
-                if status:
-                    return status
             binary = installed_codex()
             os.execv(binary, [binary, *args[1:]])
         if args[:1] == ['cleanup']:
@@ -143,10 +135,6 @@ def main():
             print(f'jev-codex {VERSION}')
             return 0
         from router import main as route
-        from native import check_host_memory
-        status = check_host_memory()
-        if status:
-            return status
         sys.argv[1:] = args
         return route()
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:

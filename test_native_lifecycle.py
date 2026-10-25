@@ -8,43 +8,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from websockets.asyncio.client import unix_connect
 from websockets.asyncio.server import unix_serve
-from native_proxy import backend_idle, relay
+from native_proxy import backend_idle
 
 
 class NativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
-    async def test_pressure_blocks_a_new_turn_without_forwarding_it(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            received = []
-            async def backend(connection):
-                async for raw in connection:
-                    request = json.loads(raw)
-                    received.append(request['method'])
-                    if 'id' in request:
-                        await connection.send(json.dumps({'id': request['id'], 'result': {}}))
-            with patch('native.check_host_memory', return_value=75):
-                async with unix_serve(backend, str(root/'backend.sock')), unix_serve(
-                        lambda client: relay(client, root/'backend.sock', root), str(root/'front.sock')):
-                    async with unix_connect(str(root/'front.sock')) as client:
-                        await client.send(json.dumps({'id': 1, 'method': 'turn/start', 'params': {
-                            'threadId': 'thread-1', 'input': [{'type': 'text', 'text': 'Work'}]}}))
-                        result = json.loads(await client.recv())
-                        self.assertIn('memory', result['error']['message'])
-                        self.assertNotIn('turn/start', received)
-
-    async def test_guard_refuses_a_new_session(self):
-        with tempfile.TemporaryDirectory() as directory:
-            guard = Path(directory) / 'host-memory-check'
-            guard.write_text('#!/bin/sh\nexit 75\n')
-            guard.chmod(0o755)
-            result = subprocess.run([sys.executable, '-c', 'from native import run; raise SystemExit(run([]))'],
-                                    env={**os.environ, 'PATH': directory}, capture_output=True, timeout=5)
-            self.assertEqual(result.returncode, 75, result.stderr)
-
     async def test_idle_probe_preserves_active_and_unknown_work(self):
         with tempfile.TemporaryDirectory() as directory:
             socket = Path(directory) / 'backend.sock'
